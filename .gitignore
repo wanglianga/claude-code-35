@@ -1,0 +1,47 @@
+# Environment and credentials
+.env
+.env.*
+!.env.example
+*.secret
+*.key
+*.pem
+*.p12
+*credentials*
+*credential*
+*token*
+*connection-string*
+
+# Dependencies and build output
+node_modules/
+dist/
+build/
+target/
+coverage/
+.cache/
+.vite/
+*.tsbuildinfo
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+tmp/
+temp/
+
+# Local application data
+*.db
+*.sqlite
+*.sqlite3
+
+# Agent, local configuration, traces and QA artifacts
+memory/
+memories/
+skill/
+skills/
+.claude/
+.codex/
+.playwright-cli/
+*_traces/
+qa/
+QA/
+CLAUDE.md

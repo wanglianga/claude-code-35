@@ -1,0 +1,15 @@
+services:
+  app:
+    build: .
+    image: city-pet-boarding-care:latest
+    container_name: ${COMPOSE_PROJECT_NAME}-app
+    ports:
+      # 仅发布应用端口到宿主，宿主端口由 CC_PUBLISH_PORT 决定，避免并行任务端口冲突
+      - "${CC_PUBLISH_PORT}:8080"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
