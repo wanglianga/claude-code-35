@@ -112,6 +112,14 @@ export function computeRisk(booking: Booking, openIncidentCount: number): PetRis
     score += openIncidentCount * 2
     tags.push(`${openIncidentCount} 起未闭环异常`)
   }
+  // 未完成补救的漏服：待店长复核权重更高
+  const pendingMissed = (booking.missedMedications ?? []).filter(
+    (m) => m.status === 'pending_review' || m.status === 'pending_remedy',
+  )
+  if (pendingMissed.length) {
+    score += pendingMissed.some((m) => m.status === 'pending_review') ? 2 : 1
+    tags.push('漏服待补救')
+  }
   if (booking.extended) tags.push('已延长寄养')
 
   score = Math.max(0, score)

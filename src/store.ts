@@ -5,8 +5,11 @@ import type {
   CareEvent,
   Incident,
   IncidentAction,
+  MissedMedication,
+  MissedReason,
   Pet,
   Room,
+  ScheduleAdjustment,
   ShiftNote,
   User,
   TrialObservation,
@@ -22,6 +25,35 @@ let seq = 1000
 export function uid(prefix = 'id'): string {
   seq += 1
   return `${prefix}-${Date.now().toString(36)}-${seq}`
+}
+
+export const MISSED_REASON_LABEL: Record<MissedReason, string> = {
+  missed: '漏服（到点未喂）',
+  spit_out: '宠物吐出药片',
+  vomited: '服药后呕吐',
+  refused: '拒服',
+  other: '其他',
+}
+
+export const MISSED_STATUS_LABEL = {
+  pending_review: '待店长复核',
+  pending_remedy: '待补服/待方案',
+  made_up: '已补服成功',
+  skipped: '已跳次/不补',
+} as const
+
+// 严重漏服建议规则：服药后呕吐、吐出药片，或关键药品（抗生素/抗菌/处方类）漏服
+export function suggestMissedSeverity(reason: MissedReason, medName: string): 'normal' | 'serious' {
+  if (reason === 'vomited') return 'serious'
+  const critical = /抗生素|抗菌|消炎|处方|心脏|癫痫|胰岛素|眼膏|蒙脱/.test(medName)
+  return critical ? 'serious' : 'normal'
+}
+
+function fmtShort(iso: string): string {
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return iso
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
 function nowIso(): string {
@@ -73,6 +105,31 @@ interface State {
 
   // 班次交接
   addShiftNote: (n: Omit<ShiftNote, 'id' | 'createdAt'>) => void
+
+  // 喂药漏服补救
+  recordMissedMed: (input: {
+    bookingId: string
+    medicationId: string
+    scheduledAt: string
+    detectedAt: string
+    reason: MissedReason
+    petCondition: string
+    severity: 'normal' | 'serious'
+    notifyOwner: boolean
+    notifyHospital: boolean
+  }) => string
+  managerReviewMissedMed: (missedId: string, note: string, approve: boolean) => void
+  confirmRemedyPlan: (
+    missedId: string,
+    plan: {
+      remediation: 'make_up' | 'skip_dose' | 'vet_advice'
+      plan: string
+      ownerInstruction: string
+      nextSchedule?: Omit<ScheduleAdjustment, 'medicationId' | 'originalTime' | 'reason'>
+    },
+  ) => void
+  completeMakeUp: (missedId: string, note: string) => void
+  skipDose: (missedId: string, note: string) => void
 }
 
 export const useStore = create<State>()(
@@ -279,9 +336,205 @@ export const useStore = create<State>()(
         set((s) => ({
           shiftNotes: [{ ...n, id: uid('s'), createdAt: nowIso() }, ...s.shiftNotes],
         })),
+
+      recordMissedMed: (input) => {
+        const s = get()
+        const me = s.users.find((u) => u.id === s.currentUserId)
+        const booking = s.bookings.find((b) => b.id === input.bookingId)
+        if (!booking) throw new Error('订单不存在')
+        const med = booking.profile.medications.find((m) => m.id === input.medicationId)
+        const id = uid('mm')
+        const rec: MissedMedication = {
+          id,
+          bookingId: booking.id,
+          petId: booking.petId,
+          medicationId: input.medicationId,
+          medName: med?.name ?? '未知药品',
+          scheduledAt: input.scheduledAt,
+          detectedAt: input.detectedAt,
+          reason: input.reason,
+          petCondition: input.petCondition,
+          severity: input.severity,
+          status: input.severity === 'serious' ? 'pending_review' : 'pending_remedy',
+          notifyOwner: input.notifyOwner,
+          notifyHospital: input.notifyHospital,
+          recordedById: s.currentUserId ?? 'unknown',
+        }
+        const events: CareEvent[] = [
+          {
+            id: uid('e'),
+            petId: booking.petId,
+            at: input.detectedAt,
+            type: 'medicate',
+            detail: `发现漏服「${rec.medName}」（计划 ${input.scheduledAt.slice(11, 16)}），原因：${MISSED_REASON_LABEL[input.reason]}；宠物状态：${input.petCondition}`,
+            recorderId: s.currentUserId ?? 'unknown',
+            medicationId: input.medicationId,
+            medicated: false,
+          },
+        ]
+        // 严重漏服 → 店长复核 + 异常协同单（店长/护理员/主人/医院）
+        let state: Partial<State> = {}
+        if (input.severity === 'serious') {
+          const incId = uid('inc')
+          const firstAction: IncidentAction = {
+            id: uid('a'),
+            at: nowIso(),
+            actorId: s.currentUserId ?? 'unknown',
+            actorRole: me?.role ?? 'caregiver',
+            action: `登记严重漏服：${rec.medName}（计划 ${fmtShort(input.scheduledAt)}），原因：${MISSED_REASON_LABEL[input.reason]}，宠物状态：${input.petCondition}。已提交店长复核，${input.notifyOwner ? '已通知主人' : '暂未通知主人'}，${input.notifyHospital ? '已请兽医/合作医院介入' : '暂未通知医院'}。`,
+          }
+          state = {
+            incidents: [
+              {
+                id: incId,
+                petId: booking.petId,
+                kind: 'missed_med',
+                title: `${booking.petName} 严重漏服「${rec.medName}」待店长复核`,
+                openedAt: nowIso(),
+                openedById: s.currentUserId ?? 'unknown',
+                status: 'open',
+                severity: 'high',
+                participants: ['manager', 'caregiver', ...(input.notifyOwner ? (['owner'] as Role[]) : []), ...(input.notifyHospital ? (['hospital'] as Role[]) : [])],
+                actions: [firstAction],
+              },
+              ...s.incidents,
+            ],
+          }
+          events.push({
+            id: uid('e'),
+            petId: booking.petId,
+            at: input.detectedAt,
+            type: 'abnormal',
+            detail: `严重漏服「${rec.medName}」，已进入店长复核流程`,
+            recorderId: s.currentUserId ?? 'unknown',
+            abnormalKind: 'missed_med',
+            incidentId: incId,
+          })
+        }
+        set((cur) => ({
+          bookings: cur.bookings.map((b) =>
+            b.id === booking.id ? { ...b, missedMedications: [rec, ...(b.missedMedications ?? [])] } : b,
+          ),
+          events: [...events.reverse(), ...cur.events],
+          ...state,
+        }))
+        return id
+      },
+
+      managerReviewMissedMed: (missedId, note, approve) => {
+        set((s) => ({
+          bookings: s.bookings.map((b) =>
+            b.missedMedications?.some((m) => m.id === missedId)
+              ? {
+                  ...b,
+                  missedMedications: b.missedMedications.map((m) =>
+                    m.id === missedId
+                      ? {
+                          ...m,
+                          status: approve ? 'pending_remedy' : 'skipped',
+                          managerReviewedAt: nowIso(),
+                          managerReviewNote: note,
+                        }
+                      : m,
+                  ),
+                }
+              : b,
+          ),
+        }))
+      },
+
+      confirmRemedyPlan: (missedId, plan) => {
+        set((s) => {
+          const target = s.bookings.flatMap((b) => b.missedMedications ?? []).find((m) => m.id === missedId)
+          const nextSchedule: ScheduleAdjustment | undefined = plan.nextSchedule
+            ? {
+                ...plan.nextSchedule,
+                medicationId: target!.medicationId,
+                originalTime: target!.scheduledAt.slice(11, 16),
+                reason: target!.reason,
+              }
+            : undefined
+          return {
+            bookings: s.bookings.map((b) =>
+              b.missedMedications?.some((m) => m.id === missedId)
+                ? {
+                    ...b,
+                    missedMedications: b.missedMedications.map((m) =>
+                      m.id === missedId
+                        ? {
+                            ...m,
+                            remediation: plan.remediation,
+                            plan: plan.plan,
+                            ownerInstruction: plan.ownerInstruction,
+                            nextSchedule,
+                            planConfirmedById: s.currentUserId ?? undefined,
+                            planConfirmedAt: nowIso(),
+                            status: plan.remediation === 'skip_dose' ? 'skipped' : 'pending_remedy',
+                          }
+                        : m,
+                    ),
+                  }
+                : b,
+            ),
+          }
+        })
+      },
+
+      completeMakeUp: (missedId, note) => {
+        const s = get()
+        const target = s.bookings.flatMap((b) => b.missedMedications ?? []).find((m) => m.id === missedId)
+        if (!target) return
+        set((cur) => ({
+          bookings: cur.bookings.map((b) =>
+            b.missedMedications?.some((m) => m.id === missedId)
+              ? {
+                  ...b,
+                  missedMedications: b.missedMedications.map((m) =>
+                    m.id === missedId
+                      ? { ...m, status: 'made_up', madeUpAt: nowIso(), madeUpById: cur.currentUserId ?? undefined, madeUpNote: note }
+                      : m,
+                  ),
+                }
+              : b,
+          ),
+          events: [
+            {
+              id: uid('e'),
+              petId: target.petId,
+              at: nowIso(),
+              type: 'medicate',
+              detail: `漏服补服成功：「${target.medName}」。${note}`,
+              recorderId: cur.currentUserId ?? 'unknown',
+              medicationId: target.medicationId,
+              medicated: true,
+            },
+            ...cur.events,
+          ],
+        }))
+      },
+
+      skipDose: (missedId, note) => {
+        set((s) => ({
+          bookings: s.bookings.map((b) =>
+            b.missedMedications?.some((m) => m.id === missedId)
+              ? {
+                  ...b,
+                  missedMedications: b.missedMedications.map((m) =>
+                    m.id === missedId
+                      ? { ...m, status: 'skipped', remediation: m.remediation ?? 'skip_dose', madeUpAt: nowIso(), madeUpById: s.currentUserId ?? undefined, madeUpNote: note }
+                      : m,
+                  ),
+                }
+              : b,
+          ),
+        }))
+      },
     }),
     {
-      name: 'pet-boarding-care-v1',
+      name: 'pet-boarding-care-v2',
+      version: 2,
+      // 旧版本缓存直接沿用（新字段均为可选），避免版本不匹配清空演示数据
+      migrate: (persisted) => persisted as State,
       partialize: (s) => ({
         bookings: s.bookings,
         incidents: s.incidents,
@@ -296,6 +549,89 @@ export const useStore = create<State>()(
 )
 
 // ---------- 选择器辅助 ----------
+export function allMissedMeds(bookings: Booking[]): MissedMedication[] {
+  return bookings
+    .flatMap((b) => (b.missedMedications ?? []).map((m) => ({ m, booking: b })))
+    .sort((a, z) => (a.m.detectedAt < z.m.detectedAt ? 1 : -1))
+    .map((x) => x.m)
+}
+
+export interface EffectiveMedRow {
+  medId: string
+  name: string
+  dosage: string
+  time: string // 实际提醒时间（可能被补救方案调整）
+  originalTime: string
+  status: 'pending' | 'done' | 'missed_pending_review' | 'missed_pending_remedy' | 'made_up' | 'skipped'
+  note?: string
+  missedId?: string
+}
+
+// 计算某日的有效喂药计划：套用已确认补救方案的时间调整与补服状态
+export function effectiveMedPlan(booking: Booking, events: CareEvent[], dateStr: string): EffectiveMedRow[] {
+  const rows: EffectiveMedRow[] = []
+  const dayMeds = events
+    .filter((e) => e.petId === booking.petId && e.type === 'medicate' && e.at.startsWith(dateStr))
+  const toMin = (hhmm: string) => { const [h, m] = hhmm.split(':').map(Number); return h * 60 + m }
+  const missedList = booking.missedMedications ?? []
+
+  booking.profile.medications.forEach((med) => {
+    med.times.forEach((t) => {
+      // 同日漏服：该时间点替换为漏服/补救状态（可能已调整到当日更晚时间）
+      const missed = missedList.find(
+        (m) =>
+          m.medicationId === med.id &&
+          m.scheduledAt.startsWith(dateStr) &&
+          m.scheduledAt.slice(11, 16) === t,
+      )
+      if (missed) {
+        const sameDayAdj = missed.nextSchedule?.nextDate === dateStr ? missed.nextSchedule : undefined
+        const statusMap = {
+          pending_review: 'missed_pending_review',
+          pending_remedy: 'missed_pending_remedy',
+          made_up: 'made_up',
+          skipped: 'skipped',
+        } as const
+        rows.push({
+          medId: med.id, name: med.name, dosage: med.dosage,
+          time: sameDayAdj?.adjustedTime ?? t, originalTime: t,
+          status: statusMap[missed.status],
+          note: sameDayAdj?.frequencyNote ?? missed.petCondition,
+          missedId: missed.id,
+        })
+        return
+      }
+      const hit = dayMeds.find((e) => e.medicationId === med.id && e.medicated && Math.abs(toMin(e.at.slice(11, 16)) - toMin(t)) <= 90)
+      rows.push({
+        medId: med.id, name: med.name, dosage: med.dosage, time: t, originalTime: t,
+        status: hit ? 'done' : 'pending',
+      })
+    })
+  })
+
+  // 跨日补服：漏服发生在之前日期、补救方案把补服安排到 dateStr（额外一行，不影响当日常规剂量行）
+  missedList.forEach((m) => {
+    const adj = m.nextSchedule
+    if (adj?.nextDate === dateStr && !m.scheduledAt.startsWith(dateStr)) {
+      const statusMap = {
+        pending_review: 'missed_pending_review',
+        pending_remedy: 'missed_pending_remedy',
+        made_up: 'made_up',
+        skipped: 'skipped',
+      } as const
+      rows.push({
+        medId: m.medicationId, name: m.medName, dosage: booking.profile.medications.find((x) => x.id === m.medicationId)?.dosage ?? '原剂量',
+        time: adj.adjustedTime, originalTime: adj.originalTime,
+        status: statusMap[m.status],
+        note: `补服（原 ${m.scheduledAt.slice(5, 16)}）｜${adj.frequencyNote}`,
+        missedId: m.id,
+      })
+    }
+  })
+
+  return rows.sort((a, z) => toMin(a.time) - toMin(z.time))
+}
+
 export function eventsOfPet(events: CareEvent[], petId: string): CareEvent[] {
   return events.filter((e) => e.petId === petId).sort((a, b) => (a.at < b.at ? 1 : -1))
 }
@@ -321,6 +657,7 @@ export const ABNORMAL_LABEL: Record<AbnormalKind, string> = {
   bite_staff: '咬伤员工',
   incomplete_vaccine: '疫苗记录不全',
   extend: '主人临时延长寄养',
+  missed_med: '严重喂药漏服',
   other: '其他异常',
 }
 

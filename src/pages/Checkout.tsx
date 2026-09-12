@@ -23,6 +23,11 @@ function buildSummary(b: Booking, days: number): string {
   lines.push(`${b.petName}（${p.breed}，${p.ageYears}岁${p.ageMonths}月）本次寄养 ${days} 天${b.extended ? '（含主人临时延长）' : ''}，房态：${b.trial?.result === 'accepted_solo' ? '单独照护间 1v1' : b.trial?.result === 'accepted_isolation' ? '隔离间' : '普通房'}。`)
   lines.push(`行为基线：攻击性${LEVEL_LABEL[p.aggression]}、分离焦虑${LEVEL_LABEL[p.separationAnxiety]}、${p.neutered ? '已绝育' : '未绝育'}；过敏史：${p.allergies}。`)
   if (p.medications.length) lines.push(`用药：${p.medications.map((m) => `${m.name}（${m.dosage}，${m.times.join('/')}，${m.route}）`).join('；')}。`)
+  const missed = b.missedMedications ?? []
+  const madeUp = missed.filter((m) => m.status === 'made_up')
+  const skipped = missed.filter((m) => m.status === 'skipped')
+  if (madeUp.length) lines.push(`漏服补救：寄养期间 ${madeUp.map((m) => `「${m.medName}」曾${m.reason === 'vomited' ? '服药后呕吐' : m.reason === 'spit_out' ? '吐药' : '漏服'}，已于 ${m.madeUpAt?.slice(5, 16)} 补服成功`).join('；')}，后续用药时间已按调整计划执行。`)
+  if (skipped.length) lines.push(`用药提示：${skipped.map((m) => `「${m.medName}」有 ${m.status === 'skipped' ? '跳次未补' : ''}记录`).join('；')}，请主人留意居家用药节奏。`)
   lines.push(`饮食偏好：${p.dietHabit}`)
   if (b.trial?.conclusion) lines.push(`试住结论：${b.trial.conclusion}`)
   lines.push('接回后请主人继续观察食欲、排便与情绪，按医嘱完成剩余用药疗程；如有异常及时联系门店或合作医院。')
@@ -91,6 +96,8 @@ export default function Checkout() {
 
   function doCheckout() {
     if (openIncs.length) return alert(`还有 ${openIncs.length} 起异常未闭环，请先到「异常协同」处理（可店长闭环）`)
+    const pendingMissed = (b!.missedMedications ?? []).filter((m) => m.status === 'pending_review' || m.status === 'pending_remedy')
+    if (pendingMissed.length) return alert(`还有 ${pendingMissed.length} 条喂药漏服未完成补救（待店长复核/待补服），请先到「照护记录」处理，避免带药问题离店。`)
     if (!effectiveSummary.trim()) return alert('交接摘要不能为空')
     // 自动补一行押金抵扣
     if (b!.depositPaid > 0 && !b!.charges.some((c) => c.kind === 'deposit')) {
@@ -129,6 +136,11 @@ export default function Checkout() {
             {openIncs.length > 0 && (
               <div className="summary-box" style={{ marginTop: 10, background: '#fee2e2', borderColor: '#fecaca' }}>
                 🚨 {openIncs.length} 起异常尚未闭环：{openIncs.map((i) => i.title).join('；')}
+              </div>
+            )}
+            {(b.missedMedications ?? []).filter((m) => m.status === 'pending_review' || m.status === 'pending_remedy').length > 0 && (
+              <div className="summary-box" style={{ marginTop: 10, background: '#fff7ed', borderColor: '#fed7aa' }}>
+                💊 {(b.missedMedications ?? []).filter((m) => m.status === 'pending_review' || m.status === 'pending_remedy').map((m) => `「${m.medName}」${m.status === 'pending_review' ? '待店长复核' : '待补服'}`).join('；')}，需完成补救后方可闭环。
               </div>
             )}
           </div>

@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { useStore, eventsOfPet, incidentsOfPet, ABNORMAL_LABEL } from '../store'
+import { useStore, eventsOfPet, incidentsOfPet, ABNORMAL_LABEL, effectiveMedPlan } from '../store'
 import { computeRisk, fmtDate, roomTypeLabel, RISK_LABEL, RISK_STYLE } from '../lib/risk'
 import { Badge, EmptyState, Field, Modal, PetAvatar, RiskBadge } from '../components/ui'
+import { MissedMedForm, MissedMedList } from '../components/MissedMed'
 import type { AbnormalKind, CareEvent, CareEventType } from '../types'
 
 const TYPE_META: Record<CareEventType, { icon: string; label: string; cls: string }> = {
@@ -39,6 +40,7 @@ export default function CareTimeline() {
   const risk = booking ? computeRisk(booking, petIncidents.filter((i) => i.status !== 'resolved').length) : null
 
   const [showAdd, setShowAdd] = useState(false)
+  const [showMissed, setShowMissed] = useState(false)
   const [type, setType] = useState<CareEventType>('feed')
   const [detail, setDetail] = useState('')
   const [at, setAt] = useState(() => { const d = new Date(); d.setSeconds(0, 0); const p = (n: number) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}` })
@@ -92,7 +94,7 @@ export default function CareTimeline() {
     setShowAdd(false); reset()
   }
 
-  const medPlanToday = booking?.profile.medications ?? []
+  const todayRows = booking ? effectiveMedPlan(booking, events, new Date().toISOString().slice(0, 10)) : []
 
   return (
     <div>
@@ -103,7 +105,14 @@ export default function CareTimeline() {
         <select style={{ width: 300 }} value={activePetId ?? ''} onChange={(e) => setQ({ pet: e.target.value })}>
           {visibleBookings.map((b) => <option key={b.id} value={b.petId}>{b.petName}（{b.code}）{b.ownerName ? ` · ${b.ownerName}` : ''}</option>)}
         </select>
-        {canWrite && booking && booking.status === 'boarding' && <button className="btn-sm" onClick={() => setShowAdd(true)}>＋ 新增照护记录</button>}
+        {canWrite && booking && booking.status === 'boarding' && (
+          <>
+            <button className="btn-sm" onClick={() => setShowAdd(true)}>＋ 新增照护记录</button>
+            {booking.profile.medications.length > 0 && (
+              <button className="btn-sm btn-danger" onClick={() => setShowMissed(true)}>⚠ 登记喂药漏服/吐药</button>
+            )}
+          </>
+        )}
       </div>
 
       {!booking ? <EmptyState text="暂无可查看的宠物" /> : (
@@ -124,13 +133,31 @@ export default function CareTimeline() {
                 <dt>过敏</dt><dd>{booking.profile.allergies}</dd>
               </div>
               <div className="divider" />
-              <h3>💊 用药计划</h3>
-              {medPlanToday.length === 0 ? <div className="small muted">无</div> : medPlanToday.map((m) => (
-                <div key={m.id} className="room-card risk-low">
-                  <b>{m.name}</b> <span className="small muted">{m.dosage} · {m.route}</span>
-                  <div className="small">时间点：{m.times.join(' / ')}{m.note ? `｜${m.note}` : ''}</div>
-                </div>
-              ))}
+              <h3>💊 今日用药提醒（含漏服调整）</h3>
+              {todayRows.length === 0 ? <div className="small muted">无</div> : todayRows.map((r, i) => {
+                const adjusted = r.time !== r.originalTime
+                const missed = r.status.startsWith('missed')
+                return (
+                  <div key={i} className={`room-card ${missed ? 'risk-medium' : 'risk-low'}`}>
+                    <div className="row-between">
+                      <b>{r.name}</b>
+                      <Badge className={
+                        r.status === 'done' || r.status === 'made_up' ? 'badge-green'
+                        : r.status === 'skipped' ? 'badge-gray'
+                        : missed ? 'badge-red' : 'badge-amber'
+                      }>
+                        {r.status === 'done' ? '已喂' : r.status === 'made_up' ? '已补服' : r.status === 'skipped' ? '跳次' : r.status === 'missed_pending_review' ? '漏服·待复核' : r.status === 'missed_pending_remedy' ? '漏服·待补' : '待喂'}
+                      </Badge>
+                    </div>
+                    <div className="small">
+                      提醒 <b style={adjusted ? { color: 'var(--red)' } : undefined}>{r.time}</b>
+                      {adjusted && <> <span className="tiny muted" style={{ textDecoration: 'line-through' }}>{r.originalTime}</span>（漏服调整）</>}
+                      ｜{r.dosage}
+                    </div>
+                    {r.note && <div className="tiny muted">下一班：{r.note}</div>}
+                  </div>
+                )
+              })}
             </div>
 
             <div className="card">
@@ -176,6 +203,14 @@ export default function CareTimeline() {
             )}
           </div>
         </div>
+      )}
+
+      {booking && <MissedMedList booking={booking} />}
+
+      {showMissed && booking && (
+        <Modal title={`登记喂药漏服/吐药 · ${booking.petName}`} onClose={() => setShowMissed(false)}>
+          <MissedMedForm booking={booking} onDone={() => setShowMissed(false)} />
+        </Modal>
       )}
 
       {showAdd && booking && (

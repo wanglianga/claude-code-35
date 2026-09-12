@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { useStore } from '../store'
+import { useStore, MISSED_REASON_LABEL, MISSED_STATUS_LABEL } from '../store'
 import { fmtDate } from '../lib/risk'
 import { Badge, EmptyState, PetAvatar } from '../components/ui'
 import { StatusBadge } from './Dashboard'
@@ -77,6 +77,27 @@ export default function OwnerSummary() {
           {b.handoverSummary
             ? <div className="summary-box">{b.handoverSummary}</div>
             : <div className="small muted">订单闭环时由店长生成，当前为待生成状态。接回结算后可在此查看完整摘要。</div>}
+
+          {(b.missedMedications ?? []).length > 0 && (
+            <>
+              <div className="divider" />
+              <h3>💊 喂药漏服补救记录</h3>
+              {(b.missedMedications ?? []).map((m) => (
+                <div key={m.id} className="room-card" style={{ borderLeft: `4px solid ${m.severity === 'serious' ? 'var(--red)' : 'var(--amber)'}` }}>
+                  <div className="row-between">
+                    <b>{m.medName}</b>
+                    <Badge className={m.status === 'made_up' ? 'badge-green' : m.status === 'skipped' ? 'badge-gray' : 'badge-red'}>{MISSED_STATUS_LABEL[m.status]}</Badge>
+                  </div>
+                  <div className="small muted" style={{ margin: '4px 0' }}>
+                    计划 {fmtDate(m.scheduledAt)}｜原因：{MISSED_REASON_LABEL[m.reason]}｜发现时状态：{m.petCondition}
+                  </div>
+                  {m.ownerInstruction && <div className="summary-box" style={{ marginTop: 6 }}><b>新喂药说明：</b>{m.ownerInstruction}</div>}
+                  {m.nextSchedule && <div className="small" style={{ marginTop: 4 }}>⏰ 后续用药时间已调整为 {m.nextSchedule.nextDate} {m.nextSchedule.adjustedTime}（原 {m.nextSchedule.originalTime}）</div>}
+                  {m.madeUpAt && <div className="small" style={{ color: 'var(--green)', marginTop: 4 }}>✓ {fmtDate(m.madeUpAt)} 已补服成功：{m.madeUpNote}</div>}
+                </div>
+              ))}
+            </>
+          )}
 
           {b.flaggedRisk && (
             <>

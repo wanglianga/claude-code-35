@@ -32,6 +32,50 @@ export interface Medication {
   note?: string
 }
 
+// ---- 喂药漏服补救 ----
+export type MissedReason = 'missed' | 'spit_out' | 'vomited' | 'refused' | 'other'
+export type MissedStatus = 'pending_review' | 'pending_remedy' | 'made_up' | 'skipped'
+
+// 方案确认后的用药时间调整
+export interface ScheduleAdjustment {
+  medicationId: string
+  originalTime: string // 漏服的计划时间点
+  nextDate: string // YYYY-MM-DD
+  adjustedTime: string // 调整后的补服/下次给药时间 HH:mm
+  frequencyNote: string // 对下一班提醒频率的影响
+  reason: MissedReason
+}
+
+export interface MissedMedication {
+  id: string
+  bookingId: string
+  petId: string
+  medicationId: string
+  medName: string
+  scheduledAt: string // 计划给药时间 ISO
+  detectedAt: string // 发现时间 ISO
+  reason: MissedReason // 漏服/吐出/服药后呕吐/拒服
+  petCondition: string // 发现时宠物状态
+  severity: 'normal' | 'serious' // 严重漏服 → 店长复核
+  status: MissedStatus
+  notifyOwner: boolean
+  notifyHospital: boolean
+  recordedById: string
+  // 补救方案
+  remediation?: 'make_up' | 'skip_dose' | 'vet_advice'
+  plan?: string
+  ownerInstruction?: string // 给主人的新喂药说明
+  nextSchedule?: ScheduleAdjustment // 后续喂药时间调整
+  planConfirmedById?: string
+  planConfirmedAt?: string
+  managerReviewedAt?: string
+  managerReviewNote?: string
+  // 补服执行
+  madeUpAt?: string
+  madeUpById?: string
+  madeUpNote?: string
+}
+
 // 预约阶段宠物资料（主人填写）
 export interface IntakeProfile {
   breed: string // 品种
@@ -104,6 +148,7 @@ export type AbnormalKind =
   | 'bite_staff' // 咬伤员工
   | 'incomplete_vaccine' // 疫苗记录不全
   | 'extend' // 主人临时延长寄养
+  | 'missed_med' // 严重漏服（需四方协同）
   | 'other'
 
 export interface CareEvent {
@@ -213,6 +258,8 @@ export interface Booking {
   handoverSummary?: string
   // 异常宠物 → 下次接单风险提示
   flaggedRisk?: string
+  // 喂药漏服补救记录
+  missedMedications?: MissedMedication[]
 }
 
 export interface Pet {

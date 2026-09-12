@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { useStore, eventsOfPet, openIncidentCount } from '../store'
+import { useStore, eventsOfPet, openIncidentCount, effectiveMedPlan, allMissedMeds } from '../store'
 import { computeRisk, fmtDate, RESULT_LABEL, RESULT_STYLE, boardingDays, roomTypeLabel } from '../lib/risk'
 import { Badge, EmptyState, PetAvatar, RiskBadge } from '../components/ui'
 import type { Booking, CareEvent } from '../types'
@@ -17,32 +17,22 @@ export function StatusBadge({ s }: { s: Booking['status'] }) {
   return <Badge className={x.cls}>{x.label}</Badge>
 }
 
-// 今日喂药计划：返回每只寄养宠物每个时间点的执行情况
+// 今日喂药计划：套用漏服补救后的调整时间/补服状态
 export function todayMedPlan(bookings: Booking[], events: CareEvent[]) {
   const today = new Date().toISOString().slice(0, 10)
-  const plan: { booking: Booking; medName: string; dosage: string; time: string; done: boolean; at?: string }[] = []
-  const toMin = (hhmm: string) => {
-    const [h, m] = hhmm.split(':').map(Number)
-    return h * 60 + m
-  }
-  bookings
+  return bookings
     .filter((b) => b.status === 'boarding')
-    .forEach((b) => {
-      const evs = eventsOfPet(events, b.petId).filter((e) => e.type === 'medicate' && e.at.startsWith(today))
-      b.profile.medications.forEach((m) => {
-        m.times.forEach((t) => {
-          // 计划时间点 ±90 分钟内已成功喂入视为完成
-          const hit = evs.find(
-            (e) =>
-              e.medicationId === m.id &&
-              e.medicated &&
-              Math.abs(toMin(e.at.slice(11, 16)) - toMin(t)) <= 90,
-          )
-          plan.push({ booking: b, medName: m.name, dosage: m.dosage, time: t, done: !!hit, at: hit?.at })
-        })
-      })
-    })
-  return plan.sort((a, b2) => (a.time < b2.time ? -1 : 1))
+    .flatMap((b) => effectiveMedPlan(b, events, today).map((row) => ({ booking: b, ...row })))
+    .sort((a, b2) => (a.time < b2.time ? -1 : 1))
+}
+
+const MED_ROW_BADGE: Record<string, { cls: string; text: (r: { time: string; originalTime: string; note?: string }) => string }> = {
+  done: { cls: 'badge-green', text: () => '✓ 已喂' },
+  pending: { cls: 'badge-amber', text: () => '待喂' },
+  made_up: { cls: 'badge-green', text: () => '✓ 已补服成功' },
+  skipped: { cls: 'badge-gray', text: () => '本次跳次' },
+  missed_pending_review: { cls: 'badge-red', text: () => '⚠ 漏服·待店长复核' },
+  missed_pending_remedy: { cls: 'badge-red', text: () => '⚠ 漏服·待补服' },
 }
 
 export default function Dashboard() {
@@ -62,6 +52,7 @@ export default function Dashboard() {
             const evs = eventsOfPet(events, b.petId)
             const videos = evs.filter((e) => e.type === 'video')
             const incs = incidents.filter((i) => i.petId === b.petId && i.status !== 'resolved')
+            const missed = (b.missedMedications ?? []).filter((m) => m.ownerInstruction && m.status !== 'skipped')
             return (
               <div className="card" key={b.id}>
                 <div className="row-between">
@@ -88,6 +79,14 @@ export default function Dashboard() {
                   <div>💊 最新喂药：{evs.find((e) => e.type === 'medicate') ? `${fmtDate(evs.find((e) => e.type === 'medicate')!.at)} ${evs.find((e) => e.type === 'medicate')!.detail}` : '无用药'}</div>
                   <div>🎬 视频回传：{videos.length ? `${videos.length} 条，最新 ${fmtDate(videos[0].at)}` : '暂无'}</div>
                   {incs.length > 0 && <div className="badge badge-red" style={{ alignSelf: 'flex-start' }}>🚨 {incs.length} 起异常处理中，请到「异常协同」确认</div>}
+                  {missed.map((m) => (
+                    <div key={m.id} className="summary-box" style={{ marginTop: 4, background: m.severity === 'serious' ? '#fee2e2' : '#fffbeb', borderColor: m.severity === 'serious' ? '#fecaca' : '#fde68a' }}>
+                      💊 <b>喂药说明更新：</b>{m.ownerInstruction}
+                      <div className="tiny muted" style={{ marginTop: 2 }}>
+                        {m.status === 'made_up' ? `已于 ${fmtDate(m.madeUpAt)} 补服成功` : '补救方案执行中'}
+                      </div>
+                    </div>
+                  ))}
                 </div>
                 <div className="divider" />
                 <div className="row">
@@ -143,6 +142,8 @@ export default function Dashboard() {
     .sort((x, y) => y.risk.score - x.risk.score)
   const high = riskList.filter((x) => x.risk.level === 'high')
   const medPlan = todayMedPlan(bookings, events)
+  const pendingReviewCount = allMissedMeds(bookings).filter((m) => m.status === 'pending_review').length
+  const pendingReviewPet = bookings.find((b) => (b.missedMedications ?? []).some((m) => m.status === 'pending_review'))?.petId
   const latestShift = shiftNotes[0]
 
   return (
@@ -196,21 +197,34 @@ export default function Dashboard() {
 
         <div className="col">
           <div className="card">
-            <h2>💊 今日喂药执行（{medPlan.filter((m) => m.done).length}/{medPlan.length}）</h2>
+            <h2>💊 今日喂药执行（{medPlan.filter((m) => m.status === 'done' || m.status === 'made_up').length}/{medPlan.length}）</h2>
             {medPlan.length === 0 ? <EmptyState text="今日无用药计划" /> : (
               <div className="table-wrap"><table>
-                <thead><tr><th>时间</th><th>宠物/药品</th><th>剂量</th><th>状态</th></tr></thead>
+                <thead><tr><th>提醒时间</th><th>宠物/药品</th><th>剂量</th><th>状态</th></tr></thead>
                 <tbody>
-                  {medPlan.map((m, i) => (
-                    <tr key={i}>
-                      <td className="nowrap">{m.time}</td>
-                      <td><b>{m.booking.petName}</b><div className="tiny muted">{m.medName}</div></td>
-                      <td className="small">{m.dosage}</td>
-                      <td>{m.done ? <Badge className="badge-green">✓ 已喂 {fmtDate(m.at).slice(11)}</Badge> : <Badge className="badge-amber">待喂</Badge>}</td>
-                    </tr>
-                  ))}
+                  {medPlan.map((m, i) => {
+                    const badge = MED_ROW_BADGE[m.status]
+                    const adjusted = m.time !== m.originalTime
+                    return (
+                      <tr key={i} style={m.status.startsWith('missed') ? { background: '#fff7ed' } : undefined}>
+                        <td className="nowrap">
+                          {adjusted && <span className="tiny muted" style={{ textDecoration: 'line-through' }}>{m.originalTime} </span>}
+                          <b style={adjusted ? { color: 'var(--red)' } : undefined}>{m.time}</b>
+                          {adjusted && <div className="tiny muted">漏服补救调整</div>}
+                        </td>
+                        <td><b>{m.booking.petName}</b><div className="tiny muted">{m.name}{m.note && m.status.startsWith('missed') ? `｜${m.note.slice(0, 18)}` : ''}</div></td>
+                        <td className="small">{m.dosage}</td>
+                        <td><Badge className={badge.cls}>{badge.text(m)}</Badge></td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table></div>
+            )}
+            {pendingReviewCount > 0 && (
+              <div className="hero-note" style={{ marginTop: 10, marginBottom: 0 }}>
+                有 <b>{pendingReviewCount}</b> 起严重漏服待店长复核，<Link to={`/care?pet=${pendingReviewPet ?? ''}`}>前往照护记录处理 →</Link>
+              </div>
             )}
           </div>
 

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useStore, eventsOfPet, openIncidentCount } from '../store'
+import { useStore, eventsOfPet, openIncidentCount, effectiveMedPlan } from '../store'
 import { computeRisk, fmtDate, fmtDay } from '../lib/risk'
 import { Badge, EmptyState, Field, PetAvatar, RiskBadge } from '../components/ui'
 
@@ -21,13 +21,11 @@ function PetDailyDigest({ petId }: { petId: string }) {
   const plannedMeds = booking.profile.medications
   const openInc = incidents.filter((i) => i.petId === petId && i.status !== 'resolved')
   const risk = computeRisk(booking, openInc.length)
+  const missedList = booking.missedMedications ?? []
+  const pendingMissed = missedList.filter((m) => m.status !== 'made_up' && m.status !== 'skipped')
 
-  // 喂药执行对照
-  const toMin = (hhmm: string) => { const [h, m] = hhmm.split(':').map(Number); return h * 60 + m }
-  const medRows = plannedMeds.flatMap((m) => m.times.map((t) => {
-    const done = meds.some((e) => e.medicationId === m.id && e.medicated && Math.abs(toMin(e.at.slice(11, 16)) - toMin(t)) <= 90)
-    return { name: m.name, dosage: m.dosage, time: t, done }
-  }))
+  // 喂药执行对照（套用漏服补救后的调整时间与状态）
+  const medRows = effectiveMedPlan(booking, events, today)
 
   const stoolWorst = feeds.some((f) => f.stool === 'diarrhea') ? '腹泻' : feeds.some((f) => f.stool === 'soft') ? '偏软' : feeds.some((f) => f.stool === 'normal') ? '正常' : '未记录'
   const refused = feeds.some((f) => f.appetite === 'refused')
@@ -45,10 +43,34 @@ function PetDailyDigest({ petId }: { petId: string }) {
         </div>
         <div>💩 <b>排便：</b>{stoolWorst}{stoolWorst === '腹泻' && <Badge className="badge-red">需关注</Badge>}</div>
         <div>💊 <b>喂药：</b>
-          {medRows.length === 0 ? '无计划' : medRows.map((m, i) => (
-            <span key={i} className={`chip ${m.done ? '' : 'amber'}`}>{m.time} {m.name} {m.done ? '✓' : '待喂'}</span>
-          ))}
+          {medRows.length === 0 ? '无计划' : medRows.map((m, i) => {
+            const cls = m.status === 'done' || m.status === 'made_up' ? '' : 'amber'
+            const txt =
+              m.status === 'done' ? '✓ 已喂'
+              : m.status === 'made_up' ? '✓ 已补服成功'
+              : m.status === 'skipped' ? '跳次'
+              : m.status === 'missed_pending_review' ? '⚠漏服待店长复核'
+              : m.status === 'missed_pending_remedy' ? '⚠漏服待补服'
+              : '待喂'
+            return (
+              <span key={i} className={`chip ${cls}`} title={m.note}>
+                {m.time !== m.originalTime && <span style={{ textDecoration: 'line-through', opacity: .6 }}>{m.originalTime}→</span>}
+                {m.time} {m.name} {txt}
+              </span>
+            )
+          })}
         </div>
+        {pendingMissed.length > 0 && (
+          <div className="small" style={{ color: 'var(--red)' }}>
+            ⚠ 漏服跟进：{pendingMissed.map((m) => `${m.medName}（${m.status === 'pending_review' ? '待店长复核' : '待补服'}）`).join('；')}
+            {pendingMissed[0]?.nextSchedule?.frequencyNote ? ` ｜提醒频率：${pendingMissed[0].nextSchedule.frequencyNote}` : ''}
+          </div>
+        )}
+        {missedList.some((m) => m.status === 'made_up') && (
+          <div className="tiny" style={{ color: 'var(--green)' }}>
+            ✓ 本班/近期已有漏服补服成功：{missedList.filter((m) => m.status === 'made_up').map((m) => `${m.medName} ${m.madeUpAt?.slice(11, 16)}`).join('；')}
+          </div>
+        )}
         <div>🐕‍🦺 <b>互动/遛放：</b>{walks.length ? walks.map((w) => `${w.durationMin}分钟`).join('、') : '未记录'}
           {booking.trial && <> · 试住互动最差 {Math.max(0, ...booking.trial.observations.filter((o) => o.dimension === 'interaction').map((o) => o.level)) || '—'} 分</>}
         </div>
