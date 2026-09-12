@@ -67,7 +67,8 @@ export function computeRisk(booking: Booking, openIncidentCount: number): PetRis
   const tags: string[] = []
   const p = booking.profile
 
-  if (p.vaccines.some((v) => !v.done)) {
+  const vaccineIncomplete = p.vaccines.some((v) => !v.done)
+  if (vaccineIncomplete) {
     score += 3
     tags.push('疫苗不全')
   }
@@ -93,7 +94,8 @@ export function computeRisk(booking: Booking, openIncidentCount: number): PetRis
     const obs = booking.trial.observations
     if (obs.length) {
       const avg = obs.reduce((a, o) => a + o.level, 0) / obs.length
-      score += Math.round(avg - 2) // 均分>2 开始加分
+      // 试住表现只能在表现差时上调风险，不得冲抵疫苗/攻击性等硬性风险因子
+      score += Math.max(0, Math.round(avg - 2))
       const worst: Record<string, number> = {}
       obs.forEach((o) => {
         worst[o.dimension] = Math.max(worst[o.dimension] ?? 0, o.level)
@@ -113,6 +115,8 @@ export function computeRisk(booking: Booking, openIncidentCount: number): PetRis
   if (booking.extended) tags.push('已延长寄养')
 
   score = Math.max(0, score)
+  // 硬性底线：疫苗记录不全至少中风险，避免被试住良好表现稀释
+  if (vaccineIncomplete) score = Math.max(score, 3)
   return {
     score,
     tags: Array.from(new Set(tags)),
