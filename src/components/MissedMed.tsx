@@ -5,7 +5,7 @@ import {
   suggestMissedSeverity,
   useStore,
 } from '../store'
-import { fmtLocal, localToStored, nowLocalInput, timeOf, todayLocal } from '../lib/time'
+import { fmtLocal, localToStored, nowLocal, nowLocalInput, timeOf, todayLocal } from '../lib/time'
 import { Badge, Field } from './ui'
 import type { Booking, MissedMedication, MissedReason } from '../types'
 
@@ -133,7 +133,7 @@ export function MissedMedForm({ booking, onDone }: { booking: Booking; onDone: (
 
 // ---------- 方案确认（护理员，普通漏服；或店长复核通过后） ----------
 export function RemedyPlanForm({ m }: { m: MissedMedication }) {
-  const { confirmRemedyPlan, completeMakeUp, skipDose } = useStore()
+  const { confirmRemedyPlan, skipDose } = useStore()
   const [remediation, setRemediation] = useState<'make_up' | 'skip_dose' | 'vet_advice'>('make_up')
   const [plan, setPlan] = useState(REASON_PLAN[m.reason](m.medName, timeOf(m.scheduledAt)))
   // 服药后呕吐：默认次日清晨；其他原因：默认发现当天稍后
@@ -208,14 +208,42 @@ export function RemedyPlanForm({ m }: { m: MissedMedication }) {
       </div>
 
       {m.planConfirmedAt && m.status === 'pending_remedy' && (
-        <div className="summary-box">
-          方案已于 {fmtLocal(m.planConfirmedAt)} 确认，等待执行补服。
-          <div className="row" style={{ marginTop: 8 }}>
-            <input placeholder="补服执行情况（剂量/宠物反应）" value={makeUpNote} onChange={(e) => setMakeUpNote(e.target.value)} style={{ flex: 1 }} />
-            <button className="btn-sm" onClick={() => { if (!makeUpNote.trim()) return alert('请填写补服执行情况'); completeMakeUp(m.id, makeUpNote.trim()) }}>✓ 已补服成功</button>
-          </div>
+        <MakeUpExecBox m={m} note={makeUpNote} setNote={setMakeUpNote} />
+      )}
+    </div>
+  )
+}
+
+// ---------- 补服执行：到达计划时间前禁止标记成功 ----------
+function MakeUpExecBox({ m, note, setNote }: { m: MissedMedication; note: string; setNote: (v: string) => void }) {
+  const { completeMakeUp } = useStore()
+  const now = nowLocal()
+  const earliest = m.nextSchedule ? `${m.nextSchedule.nextDate}T${m.nextSchedule.adjustedTime}:00` : null
+  const due = !earliest || now >= earliest
+  const dueText = m.nextSchedule ? `${m.nextSchedule.nextDate} ${m.nextSchedule.adjustedTime}` : '随时'
+
+  function mark() {
+    if (!note.trim()) return alert('请填写补服执行情况')
+    const res = completeMakeUp(m.id, note.trim())
+    if (!res.ok) {
+      alert(res.error + (res.earliestAt ? `（最早可标记时间：${res.earliestAt.replace('T', ' ').slice(0, 16)}）` : ''))
+    }
+  }
+
+  return (
+    <div className="summary-box">
+      方案已于 {fmtLocal(m.planConfirmedAt)} 确认，等待执行补服。
+      {!due && (
+        <div className="badge badge-red" style={{ margin: '6px 0', display: 'inline-flex' }}>
+          ⏳ 未到补服计划时间 {dueText}，当前不可标记成功，异常保持处理中
         </div>
       )}
+      <div className="row" style={{ marginTop: 8 }}>
+        <input placeholder="补服执行情况（剂量/宠物反应）" value={note} onChange={(e) => setNote(e.target.value)} style={{ flex: 1 }} />
+        <button className="btn-sm" disabled={!due} title={due ? '' : `请于 ${dueText} 后标记`} onClick={mark}>
+          {due ? '✓ 已补服成功' : `待 ${dueText} 后补服`}
+        </button>
+      </div>
     </div>
   )
 }

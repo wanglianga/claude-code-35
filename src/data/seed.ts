@@ -508,7 +508,7 @@ export const CARE_EVENTS: CareEvent[] = [
   { id: 'e20', petId: 'p1', at: '2026-09-12T07:30:00', type: 'medicate', detail: '发现 9/11 08:00 关节保漏服（昨日未核对到），原因：漏服；宠物状态：精神、行走正常', recorderId: 'c2', medicationId: 'med-naicha-1', medicated: false },
   { id: 'e21', petId: 'p3', at: '2026-09-11T20:40:00', type: 'medicate', detail: '发现 20:00 蒙脱石散服药后约 30 分钟呕吐，疑似药物吐出；宠物状态：精神尚可、便软', recorderId: 'c2', medicationId: 'med-alang-1', medicated: false },
   { id: 'e22', petId: 'p3', at: '2026-09-11T20:45:00', type: 'abnormal', detail: '严重漏服「蒙脱石散」（服药后呕吐），已提交店长复核 + 医院指导后补服成功', recorderId: 'c2', abnormalKind: 'missed_med', incidentId: 'inc5' },
-  { id: 'e23', petId: 'p3', at: '2026-09-12T06:30:00', type: 'medicate', detail: '漏服补服成功：蒙脱石散半袋温水送服，未再呕吐（原 9/11 20:00 那次按医院意见调整至今晨 06:30）', recorderId: 'c2', medicationId: 'med-alang-1', medicated: true },
+  { id: 'e23', petId: 'p3', at: '2026-09-12T06:30:00', type: 'medicate', detail: '漏服补服成功：蒙脱石散半袋温水送服，未再呕吐（原 9/11 20:00 那次按医院意见调整至今晨 06:30）', recorderId: 'c2', medicationId: 'med-alang-1', medicated: true, missedMakeUpId: 'mm2' },
   // 团子
   { id: 'e7', petId: 'p2', at: '2026-09-12T09:05:00', type: 'medicate', detail: '右眼红霉素眼膏已上，米粒大小，配合度一般', recorderId: 'c1', medicationId: 'med-tuanzi-1', medicated: true },
   { id: 'e8', petId: 'p2', at: '2026-09-12T09:30:00', type: 'feed', detail: '鱼肉猫粮 25g，剩 10g', recorderId: 'c1', food: '全价鱼肉猫粮', amount: '25g', appetite: 'normal', stool: 'normal' },

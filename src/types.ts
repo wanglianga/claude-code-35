@@ -175,6 +175,8 @@ export interface CareEvent {
   // abnormal
   abnormalKind?: AbnormalKind
   incidentId?: string // 关联异常协同单
+  // medicate：该喂药事件是某次漏服的补服（不应被计入常规计划时间点的完成判定）
+  missedMakeUpId?: string
 }
 
 // 异常协同处理状态

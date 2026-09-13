@@ -124,7 +124,7 @@ interface State {
       nextSchedule?: Omit<ScheduleAdjustment, 'medicationId' | 'originalTime' | 'reason'>
     },
   ) => void
-  completeMakeUp: (missedId: string, note: string) => void
+  completeMakeUp: (missedId: string, note: string, executedAt?: string) => { ok: boolean; error?: string; earliestAt?: string }
   skipDose: (missedId: string, note: string) => void
 }
 
@@ -524,13 +524,32 @@ export const useStore = create<State>()(
         })
       },
 
-      completeMakeUp: (missedId, note) => {
+      completeMakeUp: (missedId, note, executedAt) => {
         const s = get()
         const target = s.bookings.flatMap((b) => b.missedMedications ?? []).find((m) => m.id === missedId)
-        if (!target) return
-        const madeAt = nowIso()
+        if (!target) return { ok: false, error: '漏服记录不存在' }
+        if (target.status === 'made_up') return { ok: false, error: '该次漏服已标记补服成功' }
+        if (target.status === 'skipped') return { ok: false, error: '该次已判定跳次，不能补服' }
+        if (target.status === 'pending_review') return { ok: false, error: '严重漏服尚待店长复核，复核通过后才能补服' }
+
+        // 执行时间（门店本地挂钟时间），默认当前时间
+        const madeAt = executedAt ? localToStored(executedAt) : nowIso()
+
+        // 时间门禁：若补救方案已把补服安排到调整后的日期时间，必须到点才能标记成功，
+        // 防止「次日 06:30 补服」在当天提前完成并提前闭环异常。
+        if (target.nextSchedule) {
+          const earliest = `${target.nextSchedule.nextDate}T${target.nextSchedule.adjustedTime}:00`
+          if (madeAt < earliest) {
+            return {
+              ok: false,
+              error: `补服计划时间为 ${target.nextSchedule.nextDate} ${target.nextSchedule.adjustedTime}，到点前不能标记成功；请按调整后时间执行，异常单在此之前保持处理中。`,
+              earliestAt: earliest,
+            }
+          }
+        }
+
         const closeAction: IncidentAction | null = target.incidentId
-          ? { id: uid('a'), at: madeAt, actorId: s.currentUserId ?? 'unknown', actorRole: 'caregiver', action: `漏服补救完成：${target.medName} 已补服成功。${note}（调整后提醒时间 ${target.nextSchedule ? `${target.nextSchedule.nextDate} ${target.nextSchedule.adjustedTime}` : '按方案'}），异常闭环。` }
+          ? { id: uid('a'), at: madeAt, actorId: s.currentUserId ?? 'unknown', actorRole: 'caregiver', action: `漏服补救完成：${target.medName} 已于 ${target.nextSchedule ? `${target.nextSchedule.nextDate} ${target.nextSchedule.adjustedTime}` : madeAt.slice(11, 16)} 补服成功。${note}，异常闭环。` }
           : null
         set((cur) => ({
           bookings: cur.bookings.map((b) =>
@@ -555,6 +574,7 @@ export const useStore = create<State>()(
               recorderId: cur.currentUserId ?? 'unknown',
               medicationId: target.medicationId,
               medicated: true,
+              missedMakeUpId: target.id,
             },
             ...cur.events,
           ],
@@ -562,11 +582,12 @@ export const useStore = create<State>()(
           incidents: target.incidentId
             ? cur.incidents.map((ic) =>
                 ic.id === target.incidentId
-                  ? { ...ic, title: ic.title.replace(/待店长复核|店长复核通过·补救处理中/, '漏服已补服成功·已闭环'), status: 'resolved', resolvedAt: madeAt, resolution: `漏服已按方案补服成功：${note}`, actions: closeAction ? [...ic.actions, closeAction] : ic.actions }
+                  ? { ...ic, title: ic.title.replace(/待店长复核|店长复核通过·补救处理中/, '漏服已补服成功·已闭环'), status: 'resolved', resolvedAt: madeAt, resolution: `漏服已按方案于 ${target.nextSchedule ? `${target.nextSchedule.nextDate} ${target.nextSchedule.adjustedTime}` : madeAt.slice(11, 16)} 补服成功：${note}`, actions: closeAction ? [...ic.actions, closeAction] : ic.actions }
                   : ic,
               )
             : cur.incidents,
         }))
+        return { ok: true }
       },
 
       skipDose: (missedId, note) => {
@@ -667,7 +688,8 @@ export function effectiveMedPlan(booking: Booking, events: CareEvent[], dateStr:
         return
       }
       const hit = dayMeds.find(
-        (e) => e.medicationId === med.id && e.medicated && Math.abs(toMinutes(timeOf(e.at)) - toMinutes(t)) <= 90,
+        // 补服事件不计入常规时间点（补的是之前那次，不代表本次常规剂量已喂）
+        (e) => e.medicationId === med.id && e.medicated && !e.missedMakeUpId && Math.abs(toMinutes(timeOf(e.at)) - toMinutes(t)) <= 90,
       )
       rows.push({
         medId: med.id, name: med.name, dosage: med.dosage, time: t, originalTime: t,
