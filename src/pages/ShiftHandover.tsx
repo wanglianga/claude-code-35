@@ -1,17 +1,18 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useStore, eventsOfPet, openIncidentCount, effectiveMedPlan } from '../store'
-import { computeRisk, fmtDate, fmtDay } from '../lib/risk'
+import { computeRisk, fmtDate } from '../lib/risk'
+import { dateOf, todayLocal } from '../lib/time'
 import { Badge, EmptyState, Field, PetAvatar, RiskBadge } from '../components/ui'
 
 // 单只宠物的当日照护摘要（喂药/饮食/排便/互动/主人沟通/异常）
 function PetDailyDigest({ petId }: { petId: string }) {
   const { bookings, events, incidents, users } = useStore()
   const pet = useStore((s) => s.pets.find((p) => p.id === petId))
-  const today = new Date().toISOString().slice(0, 10)
+  const today = todayLocal()
   const booking = bookings.filter((b) => b.petId === petId && b.status !== 'closed').sort((a, b2) => (a.createdAt < b2.createdAt ? 1 : -1))[0]
   if (!booking) return null
-  const dayEvents = eventsOfPet(events, petId).filter((e) => e.at.startsWith(today))
+  const dayEvents = eventsOfPet(events, petId).filter((e) => dateOf(e.at) === today)
   const feeds = dayEvents.filter((e) => e.type === 'feed')
   const meds = dayEvents.filter((e) => e.type === 'medicate')
   const walks = dayEvents.filter((e) => e.type === 'walk')
@@ -68,7 +69,7 @@ function PetDailyDigest({ petId }: { petId: string }) {
         )}
         {missedList.some((m) => m.status === 'made_up') && (
           <div className="tiny" style={{ color: 'var(--green)' }}>
-            ✓ 本班/近期已有漏服补服成功：{missedList.filter((m) => m.status === 'made_up').map((m) => `${m.medName} ${m.madeUpAt?.slice(11, 16)}`).join('；')}
+            ✓ 本班/近期已有漏服补服成功：{missedList.filter((m) => m.status === 'made_up').map((m) => `${m.medName} ${m.madeUpAt?.slice(5, 16).replace('T', ' ')}`).join('；')}
           </div>
         )}
         <div>🐕‍🦺 <b>互动/遛放：</b>{walks.length ? walks.map((w) => `${w.durationMin}分钟`).join('、') : '未记录'}
@@ -105,7 +106,7 @@ export default function ShiftHandover() {
   function publish() {
     if (!content.trim()) return alert('请填写交接内容')
     addShiftNote({
-      shift, date: new Date().toISOString().slice(0, 10),
+      shift, date: todayLocal(),
       fromManagerId: isManager ? me.id : undefined,
       toCaregiverId: toCaregiver || undefined,
       content: content.trim(), petIds: activePetIds,
@@ -119,7 +120,7 @@ export default function ShiftHandover() {
       <p className="muted">店长交接时可看到每只宠物的当日风险摘要；下一班护理员据此接手，不用从零翻看所有记录。摘要覆盖喂药、饮食、排便、互动与主人沟通。</p>
 
       <div className="card">
-        <h2>🐾 今日（{fmtDay(new Date().toISOString())}）在住宠物风险摘要</h2>
+        <h2>🐾 今日（{todayLocal()}）在住宠物风险摘要</h2>
         {activePetIds.length === 0 ? <EmptyState text="当前无在住宠物" /> : (
           <div className="grid grid-2">
             {/* 高风险在前 */}

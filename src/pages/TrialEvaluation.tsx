@@ -3,6 +3,7 @@ import { useStore } from '../store'
 import { DIM_LABEL, RESULT_LABEL, RESULT_STYLE, dimAverage, fmtDate, suggestTrialResult } from '../lib/risk'
 import { Badge, Field, PetAvatar, ScorePicker } from '../components/ui'
 import { StatusBadge } from './Dashboard'
+import { localToStored } from '../lib/time'
 import type { Booking, TrialDimension, TrialResult } from '../types'
 
 const DIMS: TrialDimension[] = ['interaction', 'eating', 'defecation', 'barking', 'scratching', 'rest']
@@ -125,7 +126,7 @@ export default function TrialEvaluation() {
                 </Field>
               </div>
               <div style={{ marginTop: 10 }}>
-                <button onClick={() => scheduleTrial(b.id, new Date(schedAt).toISOString(), schedRoom, schedWho)}>确认安排，进入试住</button>
+                <button onClick={() => scheduleTrial(b.id, localToStored(schedAt), schedRoom, schedWho)}>确认安排，进入试住</button>
               </div>
             </div>
           )}

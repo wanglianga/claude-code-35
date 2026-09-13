@@ -26,7 +26,7 @@ function buildSummary(b: Booking, days: number): string {
   const missed = b.missedMedications ?? []
   const madeUp = missed.filter((m) => m.status === 'made_up')
   const skipped = missed.filter((m) => m.status === 'skipped')
-  if (madeUp.length) lines.push(`漏服补救：寄养期间 ${madeUp.map((m) => `「${m.medName}」曾${m.reason === 'vomited' ? '服药后呕吐' : m.reason === 'spit_out' ? '吐药' : '漏服'}，已于 ${m.madeUpAt?.slice(5, 16)} 补服成功`).join('；')}，后续用药时间已按调整计划执行。`)
+  if (madeUp.length) lines.push(`漏服补救：寄养期间 ${madeUp.map((m) => `「${m.medName}」曾${m.reason === 'vomited' ? '服药后呕吐' : m.reason === 'spit_out' ? '吐药' : '漏服'}，已于 ${m.madeUpAt?.slice(5, 16).replace('T', ' ')} 补服成功`).join('；')}，后续用药时间已按调整计划执行。`)
   if (skipped.length) lines.push(`用药提示：${skipped.map((m) => `「${m.medName}」有 ${m.status === 'skipped' ? '跳次未补' : ''}记录`).join('；')}，请主人留意居家用药节奏。`)
   lines.push(`饮食偏好：${p.dietHabit}`)
   if (b.trial?.conclusion) lines.push(`试住结论：${b.trial.conclusion}`)

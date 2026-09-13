@@ -74,6 +74,8 @@ export interface MissedMedication {
   madeUpAt?: string
   madeUpById?: string
   madeUpNote?: string
+  // 严重漏服自动开启的异常协同单
+  incidentId?: string
 }
 
 // 预约阶段宠物资料（主人填写）

@@ -241,6 +241,7 @@ export const BOOKINGS: Booking[] = [
         notifyOwner: true,
         notifyHospital: true,
         recordedById: 'c2',
+        incidentId: 'inc5',
         managerReviewedAt: '2026-09-11T21:00:00',
         managerReviewNote: '同意按医院意见处理：补服半袋，加强夜间观察至 24:00，明早仍有呕吐立即送院。',
         remediation: 'vet_advice',

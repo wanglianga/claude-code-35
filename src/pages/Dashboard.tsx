@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom'
 import { useStore, eventsOfPet, openIncidentCount, effectiveMedPlan, allMissedMeds } from '../store'
 import { computeRisk, fmtDate, RESULT_LABEL, RESULT_STYLE, boardingDays, roomTypeLabel } from '../lib/risk'
+import { todayLocal } from '../lib/time'
 import { Badge, EmptyState, PetAvatar, RiskBadge } from '../components/ui'
 import type { Booking, CareEvent } from '../types'
 
@@ -17,9 +18,9 @@ export function StatusBadge({ s }: { s: Booking['status'] }) {
   return <Badge className={x.cls}>{x.label}</Badge>
 }
 
-// 今日喂药计划：套用漏服补救后的调整时间/补服状态
+// 今日喂药计划：套用漏服补救后的调整时间/补服状态（门店本地日期）
 export function todayMedPlan(bookings: Booking[], events: CareEvent[]) {
-  const today = new Date().toISOString().slice(0, 10)
+  const today = todayLocal()
   return bookings
     .filter((b) => b.status === 'boarding')
     .flatMap((b) => effectiveMedPlan(b, events, today).map((row) => ({ booking: b, ...row })))

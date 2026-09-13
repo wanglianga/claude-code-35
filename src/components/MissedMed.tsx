@@ -5,7 +5,7 @@ import {
   suggestMissedSeverity,
   useStore,
 } from '../store'
-import { fmtDate } from '../lib/risk'
+import { fmtLocal, localToStored, nowLocalInput, timeOf, todayLocal } from '../lib/time'
 import { Badge, Field } from './ui'
 import type { Booking, MissedMedication, MissedReason } from '../types'
 
@@ -27,6 +27,21 @@ const REASON_PLAN: Record<MissedReason, (med: string, time: string) => string> =
   other: (m) => `「${m}」未按计划服入，按现场情况补服原剂量（不双倍），并加密观察。`,
 }
 
+// 本地日期加 n 天 → YYYY-MM-DD（门店本地日历，无时区换算）
+function addDaysLocal(dateStr: string, days: number): string {
+  const d = new Date(`${dateStr}T00:00:00`)
+  d.setDate(d.getDate() + days)
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
+
+// 主人新喂药说明（动态带入调整后的本地日期时间）
+function buildOwnerInstruction(m: MissedMedication, nextDate: string, nextTime: string): string {
+  const reasonText = MISSED_REASON_LABEL[m.reason]
+  const when = `${nextDate} ${nextTime}`
+  return `${m.medName} 原定 ${m.scheduledAt.slice(0, 10)} ${timeOf(m.scheduledAt)} 的一次未能按计划服入（${reasonText}）。发现时宠物状态：${m.petCondition}。我们将于 ${when} 按原剂量补服，不会双倍追服；${REASON_FREQ[m.reason]}。如有变化会第一时间联系您。`
+}
+
 function StatusPill({ m }: { m: MissedMedication }) {
   const cls =
     m.status === 'made_up' ? 'badge-green'
@@ -45,12 +60,8 @@ export function MissedMedForm({ booking, onDone }: { booking: Booking; onDone: (
   const med = meds.find((x) => x.id === medId)
   const [reason, setReason] = useState<MissedReason>('missed')
   const [severity, setSeverity] = useState<'normal' | 'serious'>(suggestMissedSeverity('missed', meds[0]?.name ?? ''))
-  const [date, setDate] = useState(() => {
-    const d = new Date(); d.setSeconds(0, 0)
-    const p = (n: number) => String(n).padStart(2, '0')
-    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`
-  })
-  const [scheduled, setScheduled] = useState(meds[0]?.times[0] ? `${date.slice(0, 10)}T${meds[0].times[0]}` : date)
+  const [date, setDate] = useState(nowLocalInput())
+  const [scheduled, setScheduled] = useState(meds[0]?.times[0] ? `${todayLocal()}T${meds[0].times[0]}` : date)
   const [petCondition, setPetCondition] = useState('')
   const [notifyOwner, setNotifyOwner] = useState(true)
   const [notifyHospital, setNotifyHospital] = useState(false)
@@ -68,8 +79,8 @@ export function MissedMedForm({ booking, onDone }: { booking: Booking; onDone: (
     const id = recordMissedMed({
       bookingId: booking.id,
       medicationId: medId,
-      scheduledAt: new Date(scheduled).toISOString(),
-      detectedAt: new Date(date).toISOString(),
+      scheduledAt: localToStored(scheduled),
+      detectedAt: localToStored(date),
       reason,
       petCondition: petCondition.trim(),
       severity,
@@ -124,16 +135,35 @@ export function MissedMedForm({ booking, onDone }: { booking: Booking; onDone: (
 export function RemedyPlanForm({ m }: { m: MissedMedication }) {
   const { confirmRemedyPlan, completeMakeUp, skipDose } = useStore()
   const [remediation, setRemediation] = useState<'make_up' | 'skip_dose' | 'vet_advice'>('make_up')
-  const [plan, setPlan] = useState(REASON_PLAN[m.reason](m.medName, m.scheduledAt.slice(11, 16)))
-  const [instruction, setInstruction] = useState(
-    `${m.medName} 原定 ${m.scheduledAt.slice(11, 16)} 的一次未能按计划服入（${MISSED_REASON_LABEL[m.reason]}）。我们将${m.reason === 'vomited' ? '于次日清晨按兽医指导补服' : '在最近一次喂食时补服原剂量'}，不会双倍追服；${REASON_FREQ[m.reason]}。爱宠当前状态已记录，如有变化会第一时间联系您。`,
-  )
-  const [nextDate, setNextDate] = useState(() => {
-    const d = new Date(m.detectedAt); d.setDate(d.getDate() + (m.reason === 'vomited' ? 1 : 0))
-    return d.toISOString().slice(0, 10)
-  })
-  const [nextTime, setNextTime] = useState(m.reason === 'vomited' ? '06:30' : '09:30')
+  const [plan, setPlan] = useState(REASON_PLAN[m.reason](m.medName, timeOf(m.scheduledAt)))
+  // 服药后呕吐：默认次日清晨；其他原因：默认发现当天稍后
+  const missedDate = m.scheduledAt.slice(0, 10)
+  const defaultDate = m.reason === 'vomited' || m.reason === 'spit_out'
+    ? addDaysLocal(missedDate, 1)
+    : missedDate
+  const defaultTime = m.reason === 'vomited' ? '06:30' : m.reason === 'spit_out' ? timeOf(m.scheduledAt) : '09:30'
+  const [nextDate, setNextDate] = useState(m.nextSchedule?.nextDate ?? defaultDate)
+  const [nextTime, setNextTime] = useState(m.nextSchedule?.adjustedTime ?? defaultTime)
+  const [instruction, setInstruction] = useState(buildOwnerInstruction(m, m.nextSchedule?.nextDate ?? defaultDate, m.nextSchedule?.adjustedTime ?? defaultTime))
   const [makeUpNote, setMakeUpNote] = useState('')
+
+  // 调整时间变化时，主人说明同步为同一本地时间（仍可再手工编辑）
+  useEffect(() => {
+    setInstruction(buildOwnerInstruction(m, nextDate, nextTime))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nextDate, nextTime])
+
+  function validateAdjustment(): string | null {
+    if (remediation === 'skip_dose') return null
+    const missedTs = Date.parse(`${m.scheduledAt.slice(0, 10)}T${timeOf(m.scheduledAt)}:00`)
+    const nextTs = Date.parse(`${nextDate}T${nextTime}:00`)
+    if (isNaN(nextTs)) return '请选择有效的补服日期与时间'
+    if (nextTs <= missedTs) return '补服时间必须晚于原计划给药时间，「次日清晨」不得提前到当天'
+    if ((m.reason === 'vomited' || m.reason === 'spit_out') && nextDate <= missedDate) {
+      return '服药后呕吐/吐药的补服须安排在次日，不得当天追服'
+    }
+    return null
+  }
 
   return (
     <div className="col">
@@ -167,6 +197,8 @@ export function RemedyPlanForm({ m }: { m: MissedMedication }) {
           skipDose(m.id, '方案判定本次跳过')
         }}>确认并跳次</button>
         <button onClick={() => {
+          const err = validateAdjustment()
+          if (err) return alert(err)
           confirmRemedyPlan(m.id, {
             remediation, plan, ownerInstruction: instruction,
             nextSchedule: { nextDate, adjustedTime: nextTime, frequencyNote: REASON_FREQ[m.reason] },
@@ -177,7 +209,7 @@ export function RemedyPlanForm({ m }: { m: MissedMedication }) {
 
       {m.planConfirmedAt && m.status === 'pending_remedy' && (
         <div className="summary-box">
-          方案已于 {fmtDate(m.planConfirmedAt)} 确认，等待执行补服。
+          方案已于 {fmtLocal(m.planConfirmedAt)} 确认，等待执行补服。
           <div className="row" style={{ marginTop: 8 }}>
             <input placeholder="补服执行情况（剂量/宠物反应）" value={makeUpNote} onChange={(e) => setMakeUpNote(e.target.value)} style={{ flex: 1 }} />
             <button className="btn-sm" onClick={() => { if (!makeUpNote.trim()) return alert('请填写补服执行情况'); completeMakeUp(m.id, makeUpNote.trim()) }}>✓ 已补服成功</button>
@@ -223,14 +255,14 @@ export function MissedMedCard({ m }: { m: MissedMedication }) {
         </div>
       </div>
       <div className="tiny muted" style={{ margin: '4px 0' }}>
-        计划 {fmtDate(m.scheduledAt)} · 发现 {fmtDate(m.detectedAt)} · 原因：{MISSED_REASON_LABEL[m.reason]} · 登记人 {name(m.recordedById)}
+        计划 {fmtLocal(m.scheduledAt)} · 发现 {fmtLocal(m.detectedAt)} · 原因：{MISSED_REASON_LABEL[m.reason]} · 登记人 {name(m.recordedById)}
       </div>
       <div className="small">宠物状态：{m.petCondition}</div>
       <div className="tiny muted" style={{ marginTop: 2 }}>
         通知：{m.notifyOwner ? `已联系主人（${owner?.name ?? '—'}）` : '未通知主人'} · {m.notifyHospital ? '已联系合作医院' : '未联系医院'}
       </div>
 
-      {m.managerReviewedAt && <div className="tiny" style={{ marginTop: 4 }}>👔 店长复核（{fmtDate(m.managerReviewedAt)}）：{m.managerReviewNote}</div>}
+      {m.managerReviewedAt && <div className="tiny" style={{ marginTop: 4 }}>👔 店长复核（{fmtLocal(m.managerReviewedAt)}）：{m.managerReviewNote}</div>}
 
       {m.plan && (
         <div className="summary-box" style={{ marginTop: 8 }}>
@@ -255,7 +287,7 @@ export function MissedMedCard({ m }: { m: MissedMedication }) {
 
       {m.status === 'made_up' && (
         <div className="badge badge-green" style={{ marginTop: 8 }}>
-          ✓ {fmtDate(m.madeUpAt)} 已补服成功（{name(m.madeUpById)}）：{m.madeUpNote}
+          ✓ {fmtLocal(m.madeUpAt)} 已补服成功（{name(m.madeUpById)}）：{m.madeUpNote}
         </div>
       )}
       {m.status === 'skipped' && <div className="badge badge-gray" style={{ marginTop: 8 }}>本次已跳次/不补服</div>}

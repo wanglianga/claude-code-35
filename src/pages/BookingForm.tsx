@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useStore, uid } from '../store'
+import { localToStored, nowLocal, todayLocal } from '../lib/time'
 import { Field } from '../components/ui'
 import type { Level, Medication, Vaccine } from '../types'
 
@@ -72,12 +73,12 @@ export default function BookingForm() {
     createBooking(
       {
         id: uid('b'),
-        code: 'JY' + new Date().toISOString().slice(0, 10).replace(/-/g, '') + String(Math.floor(Math.random() * 900) + 100),
+        code: 'JY' + todayLocal().replace(/-/g, '') + String(Math.floor(Math.random() * 900) + 100),
         petId,
         petName: name,
         ownerId,
         ownerName: owner.name,
-        createdAt: new Date().toISOString().slice(0, 16),
+        createdAt: nowLocal(),
         status: 'intake',
         profile: {
           breed: breed.trim(),
@@ -89,8 +90,8 @@ export default function BookingForm() {
           separationAnxiety,
           dietHabit: dietHabit.trim(),
           medications,
-          dropOffTime: new Date(dropOffTime).toISOString(),
-          pickUpTime: new Date(pickUpTime).toISOString(),
+          dropOffTime: localToStored(dropOffTime),
+          pickUpTime: localToStored(pickUpTime),
         },
         charges: [],
         depositPaid: 0,

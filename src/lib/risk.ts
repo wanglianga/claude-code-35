@@ -39,6 +39,10 @@ export const DIM_LABEL: Record<string, string> = {
 
 export function fmtDate(iso?: string): string {
   if (!iso) return '—'
+  // naive 本地串直接按门店本地挂钟时间显示，不做时区换算
+  if (!iso.endsWith('Z')) {
+    return `${iso.slice(0, 10)} ${iso.slice(11, 16)}`
+  }
   const d = new Date(iso)
   if (isNaN(d.getTime())) return iso
   const p = (n: number) => String(n).padStart(2, '0')

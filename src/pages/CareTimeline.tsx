@@ -4,6 +4,7 @@ import { useStore, eventsOfPet, incidentsOfPet, ABNORMAL_LABEL, effectiveMedPlan
 import { computeRisk, fmtDate, roomTypeLabel, RISK_LABEL, RISK_STYLE } from '../lib/risk'
 import { Badge, EmptyState, Field, Modal, PetAvatar, RiskBadge } from '../components/ui'
 import { MissedMedForm, MissedMedList } from '../components/MissedMed'
+import { localToStored, todayLocal } from '../lib/time'
 import type { AbnormalKind, CareEvent, CareEventType } from '../types'
 
 const TYPE_META: Record<CareEventType, { icon: string; label: string; cls: string }> = {
@@ -79,7 +80,7 @@ export default function CareTimeline() {
     }
     addCareEvent({
       petId: booking.petId,
-      at: new Date(at).toISOString(),
+      at: localToStored(at),
       type, detail: detail.trim(), recorderId: me.id,
       food: type === 'feed' ? food : undefined,
       amount: type === 'feed' ? amount : undefined,
@@ -94,7 +95,7 @@ export default function CareTimeline() {
     setShowAdd(false); reset()
   }
 
-  const todayRows = booking ? effectiveMedPlan(booking, events, new Date().toISOString().slice(0, 10)) : []
+  const todayRows = booking ? effectiveMedPlan(booking, events, todayLocal()) : []
 
   return (
     <div>

@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useStore, ABNORMAL_LABEL, ROLE_LABEL } from '../store'
 import { fmtDate } from '../lib/risk'
+import { localToStored } from '../lib/time'
 import { Badge, EmptyState, Field, PetAvatar } from '../components/ui'
 import type { Incident } from '../types'
 
@@ -107,9 +108,9 @@ function IncidentCard({ inc }: { inc: Incident }) {
             <div className="row">
               <input type="datetime-local" style={{ width: 220 }} value={extendTo} onChange={(e) => setExtendTo(e.target.value)} />
               <button className="btn-secondary" onClick={() => {
-                addIncidentAction(inc.id, `主人确认延长寄养至 ${fmtDate(new Date(extendTo).toISOString())}，知悉续计费用。`)
-                extendBooking(booking!.id, new Date(extendTo).toISOString(), { label: `延长寄养至 ${fmtDate(new Date(extendTo).toISOString()).slice(5, 16)}`, kind: 'addon', amount: 170, note: '主人临时延长，含单独照护加价（示例）' })
-                useStore.setState({ incidents: useStore.getState().incidents.map((x) => x.id === inc.id ? { ...x, extendTo: new Date(extendTo).toISOString(), ownerConfirmed: true } : x) })
+                addIncidentAction(inc.id, `主人确认延长寄养至 ${fmtDate(localToStored(extendTo))}，知悉续计费用。`)
+                extendBooking(booking!.id, localToStored(extendTo), { label: `延长寄养至 ${fmtDate(localToStored(extendTo)).slice(5)}`, kind: 'addon', amount: 170, note: '主人临时延长，含单独照护加价（示例）' })
+                useStore.setState({ incidents: useStore.getState().incidents.map((x) => x.id === inc.id ? { ...x, extendTo: localToStored(extendTo), ownerConfirmed: true } : x) })
               }}>确认延长并知悉费用</button>
             </div>
           )}
