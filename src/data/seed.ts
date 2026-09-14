@@ -25,6 +25,18 @@ export const PETS: Pet[] = [
   { id: 'p3', name: '阿狼', species: 'dog', avatarColor: '#ef4444', bookings: ['b3', 'b5'] },
   { id: 'p4', name: '豆豆', species: 'dog', avatarColor: '#0ea5e9', bookings: ['b4'] },
   { id: 'p5', name: '年糕', species: 'cat', avatarColor: '#ec4899', bookings: ['b6'] },
+  {
+    id: 'p6', name: '坦克', species: 'dog', avatarColor: '#334155', bookings: ['b7'],
+    rejections: [
+      {
+        id: 'rej1', bookingId: 'b7', bookingCode: 'JY2026090803', at: '2026-09-08T16:20:00',
+        outcomeKind: 'reject',
+        reason: '试住 6 小时内持续攻击（扑咬+低吼不接受安抚），应激撞笼致门齿出血并全程拒食；狂犬疫苗记录不全。超出本店照护能力，建议先完成行为评估与疫苗补种后再议。',
+        blocking: true, managerId: 'm1', managerName: '王店长', ownerAccepted: true,
+        resolution: '主人理解并确认拒收，押金全额退还、试住费免收。',
+      },
+    ],
+  },
 ]
 
 const V_FULL = [
@@ -397,6 +409,71 @@ export const BOOKINGS: Booking[] = [
     },
     charges: [],
     depositPaid: 0,
+    followUps: [],
+  },
+
+  // 7) 坦克：试住不通过已拒收（主人已确认，费用已结，档案带硬性拒收史，再次预约会被拦截）
+  {
+    id: 'b7',
+    code: 'JY2026090803',
+    petId: 'p6',
+    petName: '坦克',
+    ownerId: 'o2',
+    ownerName: '周先生',
+    createdAt: '2026-09-08T09:30:00',
+    status: 'rejected',
+    profile: {
+      breed: '比特犬混血（犬）',
+      ageYears: 1,
+      ageMonths: 6,
+      weightKg: 24,
+      vaccines: [
+        { name: '狂犬疫苗', done: false },
+        { name: '联合疫苗（犬四联/猫三联）', done: true, expiryDate: '2026-10-01' },
+      ],
+      neutered: false,
+      allergies: '无',
+      aggression: 'severe',
+      aggressionNote: '持续扑咬、护笼，不接受任何安抚',
+      separationAnxiety: 'severe',
+      dietHabit: '大型犬粮，自由采食',
+      medications: [],
+      dropOffTime: '2026-09-08T10:00:00',
+      pickUpTime: '2026-09-13T18:00:00',
+    },
+    trial: {
+      id: 't7',
+      scheduledAt: '2026-09-08T10:30:00',
+      roomId: 'r5',
+      caregiverId: 'c1',
+      observations: [
+        { id: 'to30', at: '2026-09-08T11:00:00', dimension: 'interaction', level: 5, detail: '连续扑咬靠近人员，无法近身', recorderId: 'c1' },
+        { id: 'to31', at: '2026-09-08T13:00:00', dimension: 'eating', level: 5, detail: '6 小时完全拒食，靠近食盆即低吼', recorderId: 'c1' },
+        { id: 'to32', at: '2026-09-08T14:30:00', dimension: 'scratching', level: 5, detail: '撞笼抓门致门齿出血', recorderId: 'c2' },
+        { id: 'to33', at: '2026-09-08T15:30:00', dimension: 'rest', level: 5, detail: '无法安静，极度应激', recorderId: 'c2' },
+      ],
+      result: 'rejected',
+      assessorId: 'm1',
+      assessedAt: '2026-09-08T16:00:00',
+      conclusion: '持续攻击、严重应激撞笼并全程拒食，狂犬疫苗不全，超出门店照护能力，建议先行为评估与补苗。',
+    },
+    trialOutcome: {
+      kind: 'reject',
+      reason: '试住 6 小时内持续攻击（扑咬+低吼不接受安抚），应激撞笼致门齿出血并全程拒食；狂犬疫苗记录不全。超出本店照护能力，建议先完成行为评估与疫苗补种后再议。',
+      trialFee: 0,
+      trialFeeWaived: true,
+      depositRefund: 600,
+      proposedAt: '2026-09-08T16:00:00',
+      proposedById: 'm1',
+      ownerRespondedAt: '2026-09-08T16:20:00',
+      ownerResponse: 'accepted',
+      ownerNote: '理解门店决定，接回坦克，感谢如实告知。',
+      status: 'owner_accepted',
+    },
+    charges: [
+      { id: 'ch20', label: '押金退还（拒收/未入寄养）', kind: 'deposit_refund', amount: -600, note: '[试住处置]押金退还' },
+    ],
+    depositPaid: 600,
     followUps: [],
   },
 ]

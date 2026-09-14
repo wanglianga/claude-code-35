@@ -11,9 +11,11 @@ const KIND_LABEL: Record<OrderCharge['kind'], string> = {
   abnormal_care: '异常照护',
   compensation: '赔付/减免',
   deposit: '押金抵扣',
+  trial_fee: '试住服务费',
+  deposit_refund: '押金退还',
 }
 const KIND_CLS: Record<OrderCharge['kind'], string> = {
-  boarding: 'badge-blue', addon: 'badge-purple', abnormal_care: 'badge-amber', compensation: 'badge-red', deposit: 'badge-gray',
+  boarding: 'badge-blue', addon: 'badge-purple', abnormal_care: 'badge-amber', compensation: 'badge-red', deposit: 'badge-gray', trial_fee: 'badge-amber', deposit_refund: 'badge-green',
 }
 
 // 依据整单数据自动生成护理交接摘要草稿

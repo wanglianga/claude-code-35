@@ -19,7 +19,7 @@ const NAV: NavItem[] = [
   { to: '/', icon: '🏠', label: '总览看板', roles: ['manager', 'caregiver', 'owner', 'hospital'] },
   { to: '/bookings', icon: '📋', label: '订单与宠物', roles: ['manager', 'caregiver', 'owner'] },
   { to: '/booking/new', icon: '📝', label: '预约登记', roles: ['manager', 'owner'] },
-  { to: '/trial', icon: '🧪', label: '试住评估', roles: ['manager', 'caregiver'] },
+  { to: '/trial', icon: '🧪', label: '试住评估', roles: ['manager', 'caregiver', 'owner'] },
   { to: '/care', icon: '💊', label: '照护记录', roles: ['manager', 'caregiver', 'owner', 'hospital'] },
   { to: '/incidents', icon: '🚨', label: '异常协同', roles: ['manager', 'caregiver', 'owner', 'hospital'] },
   { to: '/rooms', icon: '🏨', label: '房间风险看板', roles: ['manager', 'caregiver'] },

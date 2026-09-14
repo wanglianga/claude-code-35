@@ -4,6 +4,7 @@ import { DIM_LABEL, RESULT_LABEL, RESULT_STYLE, dimAverage, fmtDate, suggestTria
 import { Badge, Field, PetAvatar, ScorePicker } from '../components/ui'
 import { StatusBadge } from './Dashboard'
 import { localToStored } from '../lib/time'
+import TrialOutcomePanel from '../components/TrialOutcomePanel'
 import type { Booking, TrialDimension, TrialResult } from '../types'
 
 const DIMS: TrialDimension[] = ['interaction', 'eating', 'defecation', 'barking', 'scratching', 'rest']
@@ -11,18 +12,25 @@ const DIM_ICONS: Record<TrialDimension, string> = {
   interaction: '🐕‍🦺', eating: '🍚', defecation: '💩', barking: '📢', scratching: '🐾', rest: '😴',
 }
 const SCORE_LABELS: [string, string, string, string, string] = ['很好', '较好', '一般', '较差', '很差']
-const RESULTS: TrialResult[] = ['accepted_standard', 'accepted_isolation', 'accepted_solo', 'rejected']
+const RESULTS: TrialResult[] = ['accepted_standard', 'accepted_isolation', 'accepted_solo']
 
 export default function TrialEvaluation() {
   const { bookings, pets, rooms, users, currentUser, scheduleTrial, addObservation, assessTrial, startBoarding } = useStore()
   const me = currentUser()!
   const isManager = me.role === 'manager'
 
+  const isOwner = me.role === 'owner'
+  const scope = (arr: Booking[]) => (isOwner ? arr.filter((b) => b.ownerId === me.id) : arr)
   const candidates = useMemo(
-    () => bookings.filter((b) => b.status === 'intake' || b.status === 'trial' || (b.status === 'boarding' && !b.trial?.result)),
-    [bookings],
+    () => scope(bookings.filter((b) => b.status === 'intake' || b.status === 'trial' || (b.status === 'boarding' && !b.trial?.result) || b.status === 'rejected')),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [bookings, me.id],
   )
-  const assessed = useMemo(() => bookings.filter((b) => b.trial?.result), [bookings])
+  const assessed = useMemo(
+    () => scope(bookings.filter((b) => b.trial?.result || b.trialOutcome)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [bookings, me.id],
+  )
 
   const [selId, setSelId] = useState(candidates[0]?.id ?? assessed[0]?.id ?? '')
   const b = bookings.find((x) => x.id === selId)
@@ -130,10 +138,10 @@ export default function TrialEvaluation() {
               </div>
             </div>
           )}
-          {!trial && !isManager && <div className="card empty">等待店长安排试住时间与房间。</div>}
+          {!trial && !isManager && <div className="card empty">{isOwner ? '门店尚未安排试住，安排后你可在此查看试住结论与处置方案。' : '等待店长安排试住时间与房间。'}</div>}
 
-          {/* 观察记录 */}
-          {trial && !trial.result && (
+          {/* 观察记录（仅护理员/店长可写，主人只读） */}
+          {trial && !trial.result && !isOwner && (
             <div className="card">
               <h2>📝 试住观察记录（护理员）</h2>
               <div className="small muted" style={{ marginBottom: 8 }}>
@@ -222,7 +230,7 @@ export default function TrialEvaluation() {
               <div className="row"><Badge className={RESULT_STYLE[trial.result]}>{RESULT_LABEL[trial.result]}</Badge>
                 <span className="small muted">{fmtDate(trial.assessedAt)} · {userName(trial.assessorId)}</span></div>
               <div className="summary-box" style={{ marginTop: 10 }}>{trial.conclusion}</div>
-              {b.status !== 'boarding' && b.status !== 'closed' && isManager && (
+              {trial.result !== 'rejected' && b.status !== 'boarding' && b.status !== 'closed' && b.status !== 'rejected' && isManager && (
                 <button style={{ marginTop: 10 }} onClick={() => startBoarding(b.id)}>宠物已送达，开始寄养计费</button>
               )}
               {b.status === 'boarding' && <div className="badge badge-green" style={{ marginTop: 10 }}>寄养进行中</div>}
@@ -230,6 +238,11 @@ export default function TrialEvaluation() {
           )}
         </div>
       </div>
+
+      {/* 试住不通过处置（拒收 / 单独照护加价 / 建议医院检查），全宽展示 */}
+      {(b.trialOutcome || (trial && b.status !== 'boarding' && b.status !== 'closed')) && (
+        <TrialOutcomePanel booking={b} />
+      )}
     </div>
   )
 }

@@ -10,6 +10,7 @@ const STATUS_BADGE: Record<Booking['status'], { cls: string; label: string }> = 
   trial: { cls: 'badge-blue', label: '试住中' },
   boarding: { cls: 'badge-green', label: '寄养中' },
   checkout: { cls: 'badge-amber', label: '待接回' },
+  rejected: { cls: 'badge-red', label: '试住拒收' },
   closed: { cls: 'badge-gray', label: '已闭环' },
 }
 
@@ -93,6 +94,19 @@ export default function Dashboard() {
                 <div className="row">
                   <Link className="btn btn-secondary btn-sm" to={`/care?pet=${b.petId}`}>查看完整照护记录</Link>
                   {b.status === 'closed' && <Link className="btn btn-sm" to={`/summary?pet=${b.petId}`}>查看护理交接摘要</Link>}
+                {b.status === 'rejected' && b.trialOutcome && (
+                  <div className="summary-box" style={{ background: '#fee2e2', borderColor: '#fecaca', marginTop: 6 }}>
+                    🚫 <b>试住未通过：</b>{b.trialOutcome.reason}
+                    <div className="small" style={{ marginTop: 4 }}>
+                      押金退还 ¥{b.trialOutcome.depositRefund}｜试住费{b.trialOutcome.trialFeeWaived ? '免收' : `¥${b.trialOutcome.trialFee}`}
+                    </div>
+                  </div>
+                )}
+                {b.status === 'trial' && b.trialOutcome?.status === 'proposed' && (
+                  <div className="summary-box" style={{ marginTop: 6 }}>
+                    ⚠ 门店已给出试住处置方案（{b.trialOutcome.kind === 'reject' ? '拒收' : b.trialOutcome.kind === 'solo_upgrade' ? '单独照护加价接收' : '建议医院检查'}），请到「试住评估」页确认。
+                  </div>
+                )}
                 </div>
               </div>
             )
@@ -134,7 +148,7 @@ export default function Dashboard() {
   }
 
   // ---------- 店长 / 护理员视角 ----------
-  const active = bookings.filter((b) => b.status !== 'closed')
+  const active = bookings.filter((b) => b.status !== 'closed' && b.status !== 'rejected')
   const boarding = active.filter((b) => b.status === 'boarding')
   const inTrial = active.filter((b) => b.status === 'trial' || b.status === 'intake')
   const openIncs = incidents.filter((i) => i.status !== 'resolved')

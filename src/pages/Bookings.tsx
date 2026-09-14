@@ -8,8 +8,19 @@ import type { Booking } from '../types'
 
 function ProfileDetail({ b }: { b: Booking }) {
   const p = b.profile
+  const pet = useStore((s) => s.pets.find((x) => x.id === b.petId))
   return (
     <div>
+      {(pet?.rejections ?? []).length > 0 && (
+        <div className="summary-box" style={{ background: '#fee2e2', borderColor: '#fecaca', marginBottom: 12 }}>
+          <b>🚫 宠物档案拒收史（{pet!.rejections!.length} 条，再次预约受限）</b>
+          {pet!.rejections!.map((r) => (
+            <div key={r.id} style={{ marginTop: 6 }}>
+              · {r.at.slice(0, 16).replace('T', ' ')}（{r.bookingCode}，店长 {r.managerName}）：{r.reason}
+            </div>
+          ))}
+        </div>
+      )}
       <div className="kv">
         <dt>品种</dt><dd>{p.breed}</dd>
         <dt>年龄</dt><dd>{p.ageYears} 岁 {p.ageMonths} 个月{p.weightKg ? ` · ${p.weightKg} kg` : ''}</dd>
@@ -50,12 +61,13 @@ export default function Bookings() {
   const { bookings, pets, rooms, currentUser } = useStore()
   const me = currentUser()!
   const [q, setQ] = useSearchParams()
-  const [filter, setFilter] = useState<'all' | 'active' | 'closed'>('active')
+  const [filter, setFilter] = useState<'active' | 'rejected' | 'all' | 'closed'>('active')
   const [keyword, setKeyword] = useState('')
 
   const list = useMemo(() => {
     let arr = me.role === 'owner' ? bookings.filter((b) => b.ownerId === me.id) : [...bookings]
-    if (filter === 'active') arr = arr.filter((b) => b.status !== 'closed')
+    if (filter === 'active') arr = arr.filter((b) => b.status !== 'closed' && b.status !== 'rejected')
+    if (filter === 'rejected') arr = arr.filter((b) => b.status === 'rejected')
     if (filter === 'closed') arr = arr.filter((b) => b.status === 'closed')
     if (keyword.trim()) arr = arr.filter((b) => b.petName.includes(keyword) || b.code.includes(keyword))
     return arr.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
@@ -74,8 +86,9 @@ export default function Bookings() {
       <div className="row" style={{ margin: '10px 0 16px' }}>
         <div className="seg">
           <button className={filter === 'active' ? 'on' : ''} onClick={() => setFilter('active')}>进行中</button>
-          <button className={filter === 'all' ? 'on' : ''} onClick={() => setFilter('all')}>全部</button>
+          <button className={filter === 'rejected' ? 'on' : ''} onClick={() => setFilter('rejected')}>试住拒收</button>
           <button className={filter === 'closed' ? 'on' : ''} onClick={() => setFilter('closed')}>已闭环</button>
+          <button className={filter === 'all' ? 'on' : ''} onClick={() => setFilter('all')}>全部</button>
         </div>
         <input style={{ width: 220 }} placeholder="搜索宠物名 / 订单号" value={keyword} onChange={(e) => setKeyword(e.target.value)} />
       </div>

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useStore, uid } from '../store'
+import { useStore, uid, isPetBlocked } from '../store'
 import { localToStored, nowLocal, todayLocal } from '../lib/time'
 import { Field } from '../components/ui'
 import type { Level, Medication, Vaccine } from '../types'
@@ -41,6 +41,10 @@ export default function BookingForm() {
   const [medications, setMedications] = useState<Medication[]>([])
   const [medDraft, setMedDraft] = useState({ name: '', dosage: '', times: '08:00', route: '口服', note: '' })
   const [err, setErr] = useState('')
+  const [forceAccept, setForceAccept] = useState(false)
+
+  const selectedRejections = petChoice !== 'new' ? (pets.find((p) => p.id === petChoice)?.rejections ?? []) : []
+  const selectedBlocked = petChoice !== 'new' && isPetBlocked(pets, petChoice)
 
   function addMed() {
     if (!medDraft.name.trim()) return
@@ -64,6 +68,9 @@ export default function BookingForm() {
     if (!breed.trim()) return setErr('请填写品种')
     if (neutered == null) return setErr('请选择绝育情况')
     if (!dietHabit.trim()) return setErr('请填写饮食习惯')
+    if (selectedBlocked && !forceAccept) {
+      return setErr('该宠物档案有硬性拒收记录（见下方红色提示）。主人不可再次预约；如确认已具备接收条件，须由店长勾选强制覆核。')
+    }
     if (!vaccines.some((v) => v.done)) {
       if (!confirm('疫苗记录全部未勾选，到店后可能只能安排隔离/单独照护甚至无法接收。确认继续提交？')) return
     }
@@ -119,7 +126,7 @@ export default function BookingForm() {
           )}
           {myPets.length > 0 && (
             <Field label="选择已有宠物或新建">
-              <select value={petChoice} onChange={(e) => setPetChoice(e.target.value as 'new' | string)}>
+              <select value={petChoice} onChange={(e) => { setPetChoice(e.target.value as 'new' | string); setForceAccept(false) }}>
                 <option value="new">＋ 为新宠物建档</option>
                 {myPets.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
@@ -137,6 +144,29 @@ export default function BookingForm() {
           )}
         </div>
       </div>
+
+      {selectedRejections.length > 0 && (
+        <div className="card" style={{ borderLeft: '4px solid var(--red)' }}>
+          <h2>⚠ 该宠物有试住拒收 / 接单限制记录（{selectedRejections.length}）</h2>
+          {selectedRejections.map((r) => (
+            <div key={r.id} className="summary-box" style={{ background: r.blocking ? '#fee2e2' : '#fffbeb', borderColor: r.blocking ? '#fecaca' : '#fde68a', marginBottom: 8 }}>
+              <div><b>{r.blocking ? '🚫 硬性拒收（再次预约受限）' : '历史处置'}</b> · {r.at.slice(0, 16).replace('T', ' ')} · 订单 {r.bookingCode} · 店长 {r.managerName}</div>
+              <div style={{ marginTop: 4 }}>{r.reason}</div>
+              {r.resolution && <div className="small muted" style={{ marginTop: 4 }}>处理结果：{r.resolution}</div>}
+            </div>
+          ))}
+          {selectedBlocked && (
+            isManager ? (
+              <label className="checkbox-row" style={{ marginTop: 6 }}>
+                <input type="checkbox" checked={forceAccept} onChange={(e) => setForceAccept(e.target.checked)} />
+                我是店长，已重新核验（行为评估/疫苗已补齐等），强制覆核接单限制并继续预约
+              </label>
+            ) : (
+              <div className="badge badge-red">主人无法自行再次预约该宠物，请联系门店由店长核验后处理</div>
+            )
+          )}
+        </div>
+      )}
 
       <div className="card">
         <h2>② 基础资料</h2>

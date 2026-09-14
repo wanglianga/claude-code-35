@@ -101,7 +101,49 @@ export type TrialResult =
   | 'accepted_standard' // 可接收 · 普通房
   | 'accepted_isolation' // 可接收 · 隔离房
   | 'accepted_solo' // 可接收 · 单独照护
-  | 'rejected' // 暂不接收
+  | 'rejected' // 暂不接收（拒收）
+
+// 试住不通过处置类型（店长提案，主人确认）
+export type TrialOutcomeKind = 'reject' | 'solo_upgrade' | 'hospital_check'
+
+export type OutcomeStatus = 'proposed' | 'owner_accepted' | 'owner_disputed' | 'closed'
+
+export interface TrialOutcome {
+  kind: TrialOutcomeKind
+  reason: string // 门店记录的拒收/处置原因
+  // 试住费 / 押金处理
+  trialFee: number // 试住服务费（正数）
+  trialFeeWaived: boolean // 是否免收试住费
+  depositRefund: number // 押金退还金额（正数）
+  // 流程
+  proposedAt: string
+  proposedById: string
+  ownerRespondedAt?: string
+  ownerResponse?: 'accepted' | 'disputed'
+  ownerNote?: string
+  managerClosedAt?: string
+  status: OutcomeStatus
+  // 建议医院检查
+  hospitalNote?: string
+  // 单独照护加价（主人接受后写入订单费用）
+  soloSurchargeTotal?: number
+  soloSurchargeNote?: string
+}
+
+// 写入宠物档案的拒收/限制记录（再次预约时门店可见）
+export interface PetRejection {
+  id: string
+  bookingId: string
+  bookingCode: string
+  at: string
+  outcomeKind: TrialOutcomeKind
+  reason: string
+  blocking: boolean // 是否硬性拒收（再次预约直接拦截）
+  managerId: string
+  managerName: string
+  ownerAccepted: boolean
+  resolution?: string
+}
 
 export type TrialDimension =
   | 'interaction' // 与其他动物互动
@@ -227,7 +269,7 @@ export interface Room {
 export interface OrderCharge {
   id: string
   label: string
-  kind: 'addon' | 'abnormal_care' | 'compensation' | 'deposit' | 'boarding'
+  kind: 'addon' | 'abnormal_care' | 'compensation' | 'deposit' | 'boarding' | 'trial_fee' | 'deposit_refund'
   amount: number // 正=收费，负=赔付/退还
   note?: string
 }
@@ -248,9 +290,11 @@ export interface Booking {
   ownerId: string
   ownerName: string
   createdAt: string
-  status: 'intake' | 'trial' | 'boarding' | 'checkout' | 'closed'
+  status: 'intake' | 'trial' | 'boarding' | 'checkout' | 'rejected' | 'closed'
   profile: IntakeProfile
   trial?: Trial
+  // 试住不通过处置（拒收 / 单独照护加价 / 建议医院检查）
+  trialOutcome?: TrialOutcome
   roomId?: string
   actualDropOffAt?: string // 实际送达（寄养起算）
   actualPickUpAt?: string // 实际接回
@@ -272,6 +316,8 @@ export interface Pet {
   species: 'dog' | 'cat' | 'other'
   avatarColor: string
   bookings: string[] // booking ids
+  // 拒收 / 接单限制史（试住不通过写入，再次预约时门店直接可见）
+  rejections?: PetRejection[]
 }
 
 export interface ShiftNote {

@@ -8,9 +8,12 @@ import type {
   MissedMedication,
   MissedReason,
   Pet,
+  PetRejection,
   Room,
   ScheduleAdjustment,
   ShiftNote,
+  TrialOutcome,
+  TrialOutcomeKind,
   User,
   TrialObservation,
   TrialResult,
@@ -52,6 +55,22 @@ export function suggestMissedSeverity(reason: MissedReason, medName: string): 'n
 
 function fmtShort(iso: string): string {
   return `${dateOf(iso).slice(5)} ${timeOf(iso)}`
+}
+
+// 试住不通过处置费用行（统一加 [试住处置] 前缀，重新提案时按此前缀幂等替换）
+function buildOutcomeCharges(input: {
+  trialFee: number
+  trialFeeWaived: boolean
+  depositRefund: number
+}): OrderCharge[] {
+  const rows: OrderCharge[] = []
+  if (!input.trialFeeWaived && input.trialFee > 0) {
+    rows.push({ id: uid('ch'), label: '试住服务费', kind: 'trial_fee', amount: input.trialFee, note: '[试住处置]试住费' })
+  }
+  if (input.depositRefund > 0) {
+    rows.push({ id: uid('ch'), label: '押金退还（拒收/未入寄养）', kind: 'deposit_refund', amount: -input.depositRefund, note: '[试住处置]押金退还' })
+  }
+  return rows
 }
 
 function nowIso(): string {
@@ -126,6 +145,36 @@ interface State {
   ) => void
   completeMakeUp: (missedId: string, note: string, executedAt?: string) => { ok: boolean; error?: string; earliestAt?: string }
   skipDose: (missedId: string, note: string) => void
+
+  // 试住不通过处置：拒收 / 单独照护加价 / 建议医院检查
+  proposeTrialOutcome: (
+    bookingId: string,
+    input: {
+      kind: TrialOutcomeKind
+      reason: string
+      trialFee: number
+      trialFeeWaived: boolean
+      depositRefund: number
+      hospitalNote?: string
+      soloSurchargeTotal?: number
+      soloSurchargeNote?: string
+    },
+  ) => void
+  ownerRespondOutcome: (bookingId: string, accepted: boolean, note: string) => void
+  managerReviseOutcome: (
+    bookingId: string,
+    input: {
+      kind: TrialOutcomeKind
+      reason: string
+      trialFee: number
+      trialFeeWaived: boolean
+      depositRefund: number
+      hospitalNote?: string
+      soloSurchargeTotal?: number
+      soloSurchargeNote?: string
+    },
+  ) => void
+  managerCloseRejected: (bookingId: string, resolution: string) => void
 }
 
 export const useStore = create<State>()(
@@ -221,15 +270,17 @@ export const useStore = create<State>()(
 
       startBoarding: (bookingId) =>
         set((s) => ({
-          bookings: s.bookings.map((b) =>
-            b.id === bookingId
-              ? {
-                  ...b,
-                  status: 'boarding',
-                  actualDropOffAt: b.actualDropOffAt ?? b.profile.dropOffTime,
-                }
-              : b,
-          ),
+          bookings: s.bookings.map((b) => {
+            if (b.id !== bookingId) return b
+            // 已有试住不通过处置（拒收 / 待主人确认 / 医院检查）时不得开始寄养
+            const o = b.trialOutcome
+            if (o && !(o.status === 'owner_accepted' && o.kind === 'solo_upgrade')) return b
+            return {
+              ...b,
+              status: 'boarding',
+              actualDropOffAt: b.actualDropOffAt ?? b.profile.dropOffTime,
+            }
+          }),
         })),
 
       extendBooking: (bookingId, extendTo, extraCharge) =>
@@ -619,6 +670,136 @@ export const useStore = create<State>()(
             : cur.incidents,
         }))
       },
+
+      // ---------- 试住不通过处置 ----------
+      proposeTrialOutcome: (bookingId, input) => {
+        const s = get()
+        const booking = s.bookings.find((b) => b.id === bookingId)
+        if (!booking) return
+        const outcome: TrialOutcome = {
+          ...input,
+          proposedAt: nowIso(),
+          proposedById: s.currentUserId ?? 'unknown',
+          status: 'proposed',
+        }
+        const result: TrialResult | null =
+          input.kind === 'solo_upgrade' ? 'accepted_solo' : input.kind === 'reject' ? 'rejected' : null
+        set((cur) => ({
+          bookings: cur.bookings.map((b) =>
+            b.id === bookingId
+              ? {
+                  ...b,
+                  status: 'trial',
+                  trial:
+                    result && b.trial
+                      ? { ...b.trial, result, conclusion: input.reason, assessorId: outcome.proposedById, assessedAt: outcome.proposedAt }
+                      : b.trial,
+                  trialOutcome: outcome,
+                }
+              : b,
+          ),
+        }))
+      },
+
+      ownerRespondOutcome: (bookingId, accepted, note) => {
+        const s = get()
+        const booking = s.bookings.find((b) => b.id === bookingId)
+        if (!booking?.trialOutcome) return
+        const o = booking.trialOutcome
+        const respondedAt = nowIso()
+        const nextOutcome: TrialOutcome = {
+          ...o,
+          ownerRespondedAt: respondedAt,
+          ownerResponse: accepted ? 'accepted' : 'disputed',
+          ownerNote: note,
+          status: accepted ? 'owner_accepted' : 'owner_disputed',
+        }
+        const ownerRecord: PetRejection | null =
+          accepted && o.kind === 'reject'
+            ? {
+                id: uid('rej'),
+                bookingId: booking.id,
+                bookingCode: booking.code,
+                at: respondedAt,
+                outcomeKind: 'reject',
+                reason: o.reason,
+                blocking: true,
+                managerId: o.proposedById,
+                managerName: s.users.find((u) => u.id === o.proposedById)?.name ?? '店长',
+                ownerAccepted: true,
+                resolution: note || '主人已确认拒收结论',
+              }
+            : null
+
+        set((cur) => ({
+          bookings: cur.bookings.map((b) => {
+            if (b.id !== bookingId) return b
+            // 接受处置：同步费用（试住费 + 押金退还），此前未入账
+            let charges = b.charges.filter((c) => !c.note?.startsWith('[试住处置]'))
+            if (accepted) {
+              charges = [...charges, ...buildOutcomeCharges({ trialFee: o.trialFee, trialFeeWaived: o.trialFeeWaived, depositRefund: o.depositRefund })]
+              const surcharge = o.soloSurchargeTotal ?? 0
+              if (o.kind === 'solo_upgrade' && surcharge > 0) {
+                charges.push({ id: uid('ch'), label: '单独照护 1v1 加价', kind: 'addon', amount: surcharge, note: `[试住处置]单独照护加价：${o.soloSurchargeNote ?? ''}` })
+              }
+            }
+            let status: Booking['status'] = b.status
+            if (accepted && o.kind === 'reject') status = 'rejected'
+            if (accepted && o.kind === 'solo_upgrade') status = 'boarding'
+            if (accepted && o.kind === 'hospital_check') status = 'trial'
+            return {
+              ...b,
+              status,
+              actualDropOffAt: accepted && o.kind === 'solo_upgrade' ? b.actualDropOffAt ?? b.profile.dropOffTime : b.actualDropOffAt,
+              trialOutcome: nextOutcome,
+              charges,
+            }
+          }),
+          pets: ownerRecord
+            ? cur.pets.map((p) => (p.id === booking.petId ? { ...p, rejections: [ownerRecord, ...(p.rejections ?? [])] } : p))
+            : cur.pets,
+        }))
+      },
+
+      managerReviseOutcome: (bookingId, input) => {
+        // 主人异议后店长改判：清掉旧处置的费用行后重新提案
+        set((cur) => ({
+          bookings: cur.bookings.map((b) =>
+            b.id === bookingId ? { ...b, charges: b.charges.filter((c) => !c.note?.startsWith('[试住处置]')) } : b,
+          ),
+        }))
+        get().proposeTrialOutcome(bookingId, input)
+      },
+
+      managerCloseRejected: (bookingId, resolution) => {
+        const s = get()
+        const booking = s.bookings.find((b) => b.id === bookingId)
+        if (!booking?.trialOutcome) return
+        const o = booking.trialOutcome
+        const record: PetRejection = {
+          id: uid('rej'),
+          bookingId: booking.id,
+          bookingCode: booking.code,
+          at: nowIso(),
+          outcomeKind: o.kind,
+          reason: o.reason,
+          blocking: o.kind === 'reject',
+          managerId: s.currentUserId ?? o.proposedById,
+          managerName: s.users.find((u) => u.id === (s.currentUserId ?? o.proposedById))?.name ?? '店长',
+          ownerAccepted: o.ownerResponse === 'accepted',
+          resolution,
+        }
+        set((cur) => ({
+          bookings: cur.bookings.map((b) =>
+            b.id === bookingId
+              ? { ...b, status: 'rejected', trialOutcome: { ...o, status: 'closed', managerClosedAt: nowIso() } }
+              : b,
+          ),
+          pets: cur.pets.map((p) =>
+            p.id === booking.petId ? { ...p, rejections: [record, ...(p.rejections ?? []).filter((r) => r.bookingId !== bookingId)] } : p,
+          ),
+        }))
+      },
     }),
     {
       name: 'pet-boarding-care-v2',
@@ -756,4 +937,27 @@ export const ROLE_LABEL: Record<Role, string> = {
   caregiver: '护理员',
   owner: '宠物主人',
   hospital: '合作医院',
+}
+
+// ---------- 试住不通过处置 ----------
+export const OUTCOME_KIND_LABEL: Record<TrialOutcomeKind, string> = {
+  reject: '拒收（暂不接收）',
+  solo_upgrade: '改为单独照护（加价接收）',
+  hospital_check: '建议先送医院检查',
+}
+
+export const OUTCOME_STATUS_LABEL = {
+  proposed: '待主人确认',
+  owner_accepted: '主人已确认',
+  owner_disputed: '主人有异议·待店长改判',
+  closed: '已结案',
+} as const
+
+// 宠物当前生效的接单限制（硬性拒收史）
+export function petBlockingRejections(pets: Pet[], petId: string) {
+  return (pets.find((p) => p.id === petId)?.rejections ?? []).filter((r) => r.blocking)
+}
+
+export function isPetBlocked(pets: Pet[], petId: string): boolean {
+  return petBlockingRejections(pets, petId).length > 0
 }
